@@ -1,0 +1,5 @@
+{
+  "name": "RunningHub AI 客户端1.0",
+  "description": "RunningHub AI 应用的 Web 界面，支持节点修改、文件上传和任务执行。",
+  "requestFramePermissions": []
+}
