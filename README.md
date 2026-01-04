@@ -1,5 +1,8 @@
 # RunningHub AI Client (RunningHub AI 客户端)
 
+### [可以在这里下载](https://pan.quark.cn/s/81d55c2f47f4) 或者右边releases中下载最新版本，代码更新会有延迟
+
+
 RunningHub AI Client 是一个基于 React 和 Vite 构建的现代化桌面端应用，专为 RunningHub AI 服务设计。它提供了一个直观的图形化界面，使用户能够轻松配置工作流、批量运行任务、实时监控进度以及自动管理生成的内容。
 
 <img width="2571" height="1764" alt="rh11" src="https://github.com/user-attachments/assets/4d7b5fc0-e251-4c8e-b788-f0b0446ef283" />
