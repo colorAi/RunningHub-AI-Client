@@ -34,7 +34,7 @@ RunningHub AI Client 是一个基于 React 和 Vite 构建的现代化桌面端�
    ```bash
    npm run dev
    ```
-   或者在 Windows 环境下，直接双击运行根目录下的 `启动开发服务.bat` 脚本。
+   或者在 Windows 环境下，直接双击运行根目录下的 `启动.bat` 脚本。
 
 3. **构建生产版本**
    ```bash
