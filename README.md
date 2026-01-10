@@ -1,6 +1,5 @@
 # RunningHub AI Client (RunningHub AI 客户端)
 
-由于AI写的
 
 ### [可以在这里下载](https://pan.quark.cn/s/81d55c2f47f4) 或者右边releases中下载最新版本，代码暂停更新，请下载客户端使用。
 
