@@ -36,3 +36,7 @@ beifen/
 response.json
 *.ps1
 api_test_search*.txt
+
+# Docs (keep only root README.md)
+*.md
+!/README.md
