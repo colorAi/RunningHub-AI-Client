@@ -8,6 +8,11 @@ export interface NodeInfo {
   fieldData?: string; // Often contains options for LIST types (sometimes JSON string, sometimes comma separated)
 }
 
+export interface ListOption {
+  name: string;   // Display text
+  index: string;  // Value
+}
+
 export interface ApiResponse<T> {
   code: number;
   msg: string;
@@ -62,6 +67,10 @@ export interface PromptTips {
 export interface Favorite {
   name: string;
   webappId: string;
+  // Rich data for UI
+  upName?: string;
+  appInfo?: WebAppInfo;
+  nodes?: NodeInfo[]; // Saved parameters for instant load
 }
 
 export interface AccountInfo {
@@ -72,7 +81,64 @@ export interface AccountInfo {
   apiType: string;
 }
 
+export interface ApiKeyConfig {
+  apiKey: string;
+  concurrency: number;
+}
+
+export interface ApiKeyEntry {
+  id: string;                    // Unique identifier for React key
+  apiKey: string;                // The actual API key value
+  concurrency?: number;          // Max concurrent tasks for this key
+  accountInfo?: AccountInfo | null;  // Fetched account info
+  loading?: boolean;             // Loading state for this specific key
+  error?: string;                // Error message for this specific key
+}
+
 export interface AutoSaveConfig {
   enabled: boolean;
   directoryName: string | null;
+}
+
+export interface WebAppInfo {
+  webappName: string;
+  description: string;
+  descriptionEn?: string;
+  covers?: { thumbnailUri: string; uri: string }[];
+  tags?: { id: string; name: string; nameEn: string }[];
+  statisticsInfo?: {
+    likeCount: string;
+    useCount: string;
+    collectCount: string;
+    downloadCount: string;
+  };
+}
+
+// Duck decode configuration
+export interface DecodeConfig {
+  enabled: boolean;           // Enable decode for current app
+  password: string;           // Decode password (empty if not needed)
+  autoDecodeEnabled: boolean; // Auto-decode on task completion
+}
+
+// Duck decode result
+export interface DecodeResult {
+  success: boolean;
+  data?: Blob;
+  extension?: string;
+  error?: 'PASSWORD_REQUIRED' | 'WRONG_PASSWORD' | 'NOT_DUCK_IMAGE' | 'DECODE_FAILED';
+  errorMessage?: string;
+}
+
+export interface RecentApp {
+  id: string;
+  name: string;
+  timestamp: number;
+}
+
+// 批量任务失败信息
+export interface FailedTaskInfo {
+  batchIndex: number;      // 在批量列表中的索引 (0-based)
+  errorMessage: string;    // 错误信息
+  timestamp: number;       // 失败时间
 }

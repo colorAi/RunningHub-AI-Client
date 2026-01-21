@@ -1,4 +1,4 @@
-import { ApiResponse, NodeInfo, SubmitTaskData, UploadData, TaskOutput } from '../types';
+import { ApiResponse, NodeInfo, SubmitTaskData, UploadData, TaskOutput, WebAppInfo } from '../types';
 
 const API_HOST = "https://www.runninghub.cn";
 
@@ -12,9 +12,25 @@ async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
 }
 
 /**
- * Get Node Info List
+ * Build full URL for RunningHub file names
  */
-export const getNodeList = async (apiKey: string, webappId: string): Promise<NodeInfo[]> => {
+export const buildFileUrl = (value: string): string => {
+  if (!value) return '';
+  // Already a full URL or data URL
+  if (/^(https?:\/\/|data:)/i.test(value)) return value;
+  // Convert filename to RunningHub file view URL
+  return `https://www.runninghub.cn/task/openapi/view/${value}`;
+};
+
+/**
+ * Get Node Info List and App Info
+ */
+export interface GetNodeListResult {
+  nodes: NodeInfo[];
+  appInfo: WebAppInfo | null;
+}
+
+export const getNodeList = async (apiKey: string, webappId: string): Promise<GetNodeListResult> => {
   const url = `${API_HOST}/api/webapp/apiCallDemo?apiKey=${apiKey}&webappId=${webappId}`;
   const response = await fetch(url, {
     method: 'GET',
@@ -23,13 +39,29 @@ export const getNodeList = async (apiKey: string, webappId: string): Promise<Nod
     }
   });
 
-  const json: ApiResponse<{ nodeInfoList: NodeInfo[] }> = await handleResponse(response);
+  const json: ApiResponse<any> = await handleResponse(response);
 
   if (json.code !== 0 || !json.data?.nodeInfoList) {
     throw new Error(json.msg || 'Failed to fetch node list');
   }
 
-  return json.data.nodeInfoList;
+  // Normalize nodes: ensure fieldData is populated
+  const nodes = json.data.nodeInfoList.map((node: any) => ({
+    ...node,
+    fieldData: node.fieldData || node.field_data || node.options || undefined
+  }));
+
+  // Extract app info
+  const appInfo: WebAppInfo | null = json.data.webappName ? {
+    webappName: json.data.webappName,
+    description: json.data.description || '',
+    descriptionEn: json.data.descriptionEn,
+    covers: json.data.covers,
+    tags: json.data.tags,
+    statisticsInfo: json.data.statisticsInfo,
+  } : null;
+
+  return { nodes, appInfo };
 };
 
 /**
@@ -141,4 +173,108 @@ export const getAccountInfo = async (apiKey: string): Promise<{
   }
 
   return json.data;
+};
+
+/**
+ * Official App List Response Item
+ */
+export interface AppListItem {
+  id: string;
+  name: string;
+  intro: string;
+  covers: {
+    fileUri: string;
+    thumbnailUri: string;
+    imageWidth: number;
+    imageHeight: number;
+    type: string;
+  }[];
+  authorInfo?: {
+    name: string;
+    avatar: string;
+  };
+  statisticsInfo?: {
+    viewCount: number | string;
+    useCount: number | string;
+    likeCount: number | string;
+    collectCount: number | string;
+  };
+}
+
+/**
+ * Get Official App List
+ */
+export const getOfficialAppList = async (page: number = 1, size: number = 50, sort: string = 'RECOMMEND', search?: string): Promise<{
+  records: AppListItem[];
+  total: number;
+}> => {
+  const url = `${API_HOST}/api/webapp/list`;
+
+  const body: any = {
+    current: page,
+    size: size,
+    carefullyChosen: true,
+    sort: sort
+  };
+
+  if (search && search.trim()) {
+    body.search = search.trim();
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body)
+  });
+
+  const json: ApiResponse<any> = await handleResponse(response);
+
+  if (json.code !== 0) {
+    throw new Error(json.msg || 'Failed to fetch app list');
+  }
+
+  return {
+    records: json.data.records,
+    total: parseInt(json.data.total) || 0
+  };
+};
+
+/**
+ * Get App Details by ID (public API, no key required)
+ */
+export const getAppDetailById = async (appId: string): Promise<AppListItem | null> => {
+  const url = `${API_HOST}/api/webapp/list`;
+
+  const body = {
+    current: 1,
+    size: 1,
+    search: appId
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body)
+    });
+
+    const json: ApiResponse<any> = await handleResponse(response);
+
+    if (json.code !== 0 || !json.data?.records?.length) {
+      return null;
+    }
+
+    // Verify the returned app ID matches
+    const app = json.data.records[0];
+    if (app.id === appId) {
+      return app;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 };

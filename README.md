@@ -1,7 +1,6 @@
 # RunningHub AI Client (RunningHub AI 客户端)
 
-
-### [可以在这里下载](https://pan.quark.cn/s/81d55c2f47f4) 或者右边releases中下载最新版本，代码暂停更新，请下载客户端使用。
+### [可以在这里下载](https://pan.quark.cn/s/81d55c2f47f4) 或者右边releases中下载最新版本，代码更新会有延迟，请下载客户端使用。
 
 - **注册福利**: [国内点击注册送1000RH币](https://www.runninghub.cn/?inviteCode=rh-v1123) ,[海外点击注册送1000RH币](https://www.runninghub.ai/?inviteCode=rh-v1123)
 

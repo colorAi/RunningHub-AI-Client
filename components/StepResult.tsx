@@ -1,14 +1,22 @@
 import React, { useState } from 'react';
-import { HistoryItem } from '../types';
-import { Download, ExternalLink, FileIcon, ImageIcon, VideoIcon, History, Trash2, Maximize2, X, Clock, Terminal } from 'lucide-react';
+import { HistoryItem, DecodeConfig } from '../types';
+import { Download, ExternalLink, FileIcon, ImageIcon, VideoIcon, History, Trash2, Maximize2, X, Clock, Terminal, Unlock, Loader2 } from 'lucide-react';
+import { decodeDuckImage } from '../utils/duckDecoder';
 
 interface StepResultProps {
   history: HistoryItem[];
+  decodeConfig: DecodeConfig;
   onClear: () => void;
 }
 
-const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
+const StepResult: React.FC<StepResultProps> = ({ history, decodeConfig, onClear }) => {
   const [preview, setPreview] = useState<{ url: string; type: 'image' | 'video' | 'audio' | 'unknown' } | null>(null);
+  // Cache for decoded URLs: original URL -> decoded blob URL
+  const [decodedUrls, setDecodedUrls] = useState<Record<string, string>>({});
+  // Track which URLs are currently being decoded
+  const [decodingUrls, setDecodingUrls] = useState<Record<string, boolean>>({});
+  // Cache for decoded extensions: original URL -> decoded file extension
+  const [decodedExtensions, setDecodedExtensions] = useState<Record<string, string>>({});
 
   const getFileType = (url: string) => {
     if (/\.(jpg|jpeg|png|webp|gif|bmp|svg)$/i.test(url)) return 'image';
@@ -17,7 +25,7 @@ const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
     return 'unknown';
   };
 
-  const handleDownload = async (url: string) => {
+  const handleDownload = async (url: string, fileType?: string) => {
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error('Network response was not ok');
@@ -25,7 +33,23 @@ const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
       const blobUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = blobUrl;
-      const fileName = url.split('/').pop() || 'download';
+
+      // Generate filename
+      let fileName: string;
+      if (url.startsWith('blob:')) {
+        // For blob URLs, use fileType or extract from blob.type
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        let ext = fileType;
+        if (!ext && blob.type) {
+          // Extract extension from MIME type (e.g., image/png -> png)
+          const mimeExt = blob.type.split('/')[1]?.replace('jpeg', 'jpg');
+          ext = mimeExt || 'bin';
+        }
+        fileName = `decoded_${timestamp}.${ext || 'bin'}`;
+      } else {
+        fileName = url.split('/').pop() || 'download';
+      }
+
       link.setAttribute('download', fileName);
       document.body.appendChild(link);
       link.click();
@@ -35,6 +59,41 @@ const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
       console.error('Download failed:', error);
       window.open(url, '_blank');
     }
+  };
+
+  // Handle manual decode for a single image
+  const handleDecode = async (originalUrl: string) => {
+    if (decodedUrls[originalUrl] || decodingUrls[originalUrl]) return;
+
+    setDecodingUrls(prev => ({ ...prev, [originalUrl]: true }));
+    try {
+      const result = await decodeDuckImage(originalUrl, decodeConfig.password);
+      if (result.success && result.data) {
+        const decodedUrl = URL.createObjectURL(result.data);
+        setDecodedUrls(prev => ({ ...prev, [originalUrl]: decodedUrl }));
+        // Store the decoded extension
+        setDecodedExtensions(prev => ({ ...prev, [originalUrl]: result.extension || 'png' }));
+      }
+    } catch (e) {
+      console.error('Decode failed:', e);
+    } finally {
+      setDecodingUrls(prev => ({ ...prev, [originalUrl]: false }));
+    }
+  };
+
+  // Get display URL (decoded if available, otherwise original)
+  const getDisplayUrl = (originalUrl: string) => {
+    return decodedUrls[originalUrl] || originalUrl;
+  };
+
+  // Get file type for download (decoded extension if decoded, otherwise from output)
+  const getFileTypeForDownload = (originalUrl: string, outputFileType?: string) => {
+    // If manually decoded in StepResult, use the decoded extension
+    if (decodedExtensions[originalUrl]) {
+      return decodedExtensions[originalUrl];
+    }
+    // If auto-decoded in StepRunning, use the output's fileType
+    return outputFileType;
   };
 
   // Flatten all outputs into a single array for thumbnail grid
@@ -91,17 +150,41 @@ const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
       <div className="flex-1 overflow-y-auto p-4">
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
           {allOutputs.map((output, idx) => {
-            const type = getFileType(output.fileUrl);
+            const originalUrl = output.fileUrl;
+            const displayUrl = getDisplayUrl(originalUrl);
+
+            // Determine file type - prefer output.fileType for decoded images
+            let type: 'image' | 'video' | 'audio' | 'unknown' = getFileType(originalUrl);
+            if (type === 'unknown' && output.fileType) {
+              // Use fileType from decoded output
+              const extLower = output.fileType.toLowerCase();
+              if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(extLower)) {
+                type = 'image';
+              } else if (['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(extLower)) {
+                type = 'video';
+              } else if (['mp3', 'wav', 'ogg', 'flac', 'aac'].includes(extLower)) {
+                type = 'audio';
+              }
+            }
+
+            const isDecoded = !!decodedUrls[originalUrl];
+            const isDecoding = !!decodingUrls[originalUrl];
+            const showDecodeButton = decodeConfig.enabled && !decodeConfig.autoDecodeEnabled && !isDecoded && type === 'image';
+
+
             return (
               <div
                 key={`${output.historyId}-${idx}`}
-                className="group relative aspect-square bg-slate-200 dark:bg-[#0F1115] rounded-lg overflow-hidden border border-slate-300 dark:border-slate-700 cursor-pointer hover:ring-2 hover:ring-brand-500 transition-all"
-                onClick={() => setPreview({ url: output.fileUrl, type })}
+                className={`group relative aspect-square bg-slate-200 dark:bg-[#0F1115] rounded-lg overflow-hidden border cursor-pointer hover:ring-2 hover:ring-brand-500 transition-all ${isDecoded
+                  ? 'border-amber-400 dark:border-amber-500'
+                  : 'border-slate-300 dark:border-slate-700'
+                  }`}
+                onClick={() => setPreview({ url: displayUrl, type })}
               >
                 {type === 'image' ? (
-                  <img src={output.fileUrl} alt="Thumbnail" className="w-full h-full object-cover" />
+                  <img src={displayUrl} alt="Thumbnail" className="w-full h-full object-cover" />
                 ) : type === 'video' ? (
-                  <video src={output.fileUrl} className="w-full h-full object-cover opacity-80" muted preload="metadata" />
+                  <video src={displayUrl} className="w-full h-full object-cover opacity-80" muted preload="metadata" />
                 ) : (
                   <div className="flex flex-col items-center justify-center w-full h-full text-slate-400">
                     <FileIcon className="w-6 h-6 mb-1" />
@@ -109,12 +192,31 @@ const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
                   </div>
                 )}
 
+                {/* Decode Progress Overlay */}
+                {isDecoding && (
+                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                    <Loader2 className="w-6 h-6 text-amber-400 animate-spin" />
+                  </div>
+                )}
+
                 {/* Hover Overlay */}
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 backdrop-blur-[1px]">
+                  {showDecodeButton && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDecode(originalUrl);
+                      }}
+                      className="p-1.5 bg-amber-500/80 hover:bg-amber-500 text-white rounded-full backdrop-blur-md transition-colors"
+                      title="解码"
+                    >
+                      <Unlock className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setPreview({ url: output.fileUrl, type });
+                      setPreview({ url: displayUrl, type });
                     }}
                     className="p-1.5 bg-white/20 hover:bg-white/40 text-white rounded-full backdrop-blur-md transition-colors"
                     title="放大预览"
@@ -124,7 +226,7 @@ const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleDownload(output.fileUrl);
+                      handleDownload(displayUrl, getFileTypeForDownload(originalUrl, output.fileType));
                     }}
                     className="p-1.5 bg-white/20 hover:bg-white/40 text-white rounded-full backdrop-blur-md transition-colors"
                     title="下载"
@@ -137,6 +239,14 @@ const StepResult: React.FC<StepResultProps> = ({ history, onClear }) => {
                 {type !== 'image' && (
                   <div className="absolute top-1 right-1 px-1 py-0.5 bg-black/50 backdrop-blur-sm rounded text-[6px] text-white font-bold uppercase pointer-events-none">
                     {type}
+                  </div>
+                )}
+
+                {/* Decoded Badge */}
+                {isDecoded && (
+                  <div className="absolute top-1 left-1 px-1 py-0.5 bg-amber-500 rounded text-[6px] text-white font-bold uppercase pointer-events-none flex items-center gap-0.5">
+                    <Unlock className="w-2 h-2" />
+                    已解码
                   </div>
                 )}
               </div>

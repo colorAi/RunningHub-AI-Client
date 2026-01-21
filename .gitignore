@@ -25,3 +25,14 @@ build_windows.bat
 *.njsproj
 *.sln
 *.sw?
+
+# Backups
+beifen/
+
+# IDE
+.trae/
+
+# Debug & Temp files
+response.json
+*.ps1
+api_test_search*.txt

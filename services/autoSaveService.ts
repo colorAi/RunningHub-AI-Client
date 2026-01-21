@@ -181,8 +181,19 @@ export async function clearDirectory(): Promise<void> {
  * Save a file from URL to the selected directory
  * @param url URL of the file to download
  * @param filename Optional custom filename (will extract from URL if not provided)
+ * @param extension Optional file extension for blob URLs
  */
-export async function saveFileFromUrl(url: string, filename?: string): Promise<boolean> {
+// Cache for sequential file indexing to avoid redundant checks
+const sequenceCache = new Map<string, number>();
+
+/**
+ * Save a file from URL to the selected directory
+ * @param url URL of the file to download
+ * @param filename Optional custom filename (will extract from URL if not provided)
+ * @param extension Optional file extension for blob URLs
+ * @param sequential If true, ensures filename is unique by appending sequential number
+ */
+export async function saveFileFromUrl(url: string, filename?: string, extension?: string, sequential?: boolean): Promise<boolean> {
     if (!directoryHandle) {
         throw new Error('未选择保存目录');
     }
@@ -196,23 +207,87 @@ export async function saveFileFromUrl(url: string, filename?: string): Promise<b
 
         const blob = await response.blob();
 
-        // Determine filename
+        // Determine filename and extension
         let finalFilename = filename;
+        let ext = extension || '';
+
+        // If no filename provided, try to extract from URL or Blob
         if (!finalFilename) {
-            const urlPath = new URL(url).pathname;
-            finalFilename = urlPath.split('/').pop() || `file_${Date.now()}`;
+            if (url.startsWith('blob:')) {
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                if (!ext && blob.type) {
+                    const mimeExt = blob.type.split('/')[1]?.replace('jpeg', 'jpg');
+                    ext = mimeExt || 'bin';
+                }
+                finalFilename = `decoded_${timestamp}.${ext}`;
+            } else {
+                const urlPath = new URL(url).pathname;
+                finalFilename = urlPath.split('/').pop() || `file_${Date.now()}`;
+            }
         }
 
-        // Ensure unique filename by adding timestamp if needed
-        const ext = finalFilename.includes('.')
-            ? finalFilename.substring(finalFilename.lastIndexOf('.'))
-            : '';
-        const baseName = finalFilename.includes('.')
-            ? finalFilename.substring(0, finalFilename.lastIndexOf('.'))
-            : finalFilename;
+        // Logic for Sequential Naming or Timestamping
+        if (sequential && filename) {
+            // We expect filename to be the "base name" without index or extension if sequential is true
+            // E.g. "test_T001"
 
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        finalFilename = `${baseName}_${timestamp}${ext}`;
+            // Ensure extension is present
+            if (!ext && blob.type) {
+                const mimeExt = blob.type.split('/')[1]?.replace('jpeg', 'jpg');
+                ext = mimeExt || 'bin';
+            }
+            if (!ext) ext = 'bin'; // Fallback
+
+            const baseName = filename;
+            const cacheKey = `${baseName}.${ext}`;
+            let index = sequenceCache.get(cacheKey) || 1;
+
+            // Find next available index
+            while (true) {
+                const suffix = String(index).padStart(5, '0');
+                const candidate = `${baseName}_${suffix}.${ext}`;
+                try {
+                    // Check if file exists without creating
+                    await directoryHandle.getFileHandle(candidate);
+                    // If no error, file exists, try next
+                    index++;
+                } catch (e: any) {
+                    if (e.name === 'NotFoundError') {
+                        // File does not exist, use this name
+                        finalFilename = candidate;
+                        sequenceCache.set(cacheKey, index + 1); // Update cache for next time
+                        break;
+                    }
+                    throw e; // Other errors
+                }
+                // Safety break
+                if (index > 100000) throw new Error('Too many sequential files');
+            }
+        } else if (!url.startsWith('blob:') && !filename) {
+            // Default behavior for generic URLs without custom name: append timestamp
+            const fileExt = finalFilename.includes('.')
+                ? finalFilename.substring(finalFilename.lastIndexOf('.') + 1)
+                : '';
+            const fileBase = finalFilename.includes('.')
+                ? finalFilename.substring(0, finalFilename.lastIndexOf('.'))
+                : finalFilename;
+
+            // If extension was undetermined effectively, update it
+            if (fileExt) ext = fileExt;
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            finalFilename = `${fileBase}_${timestamp}.${ext}`;
+        }
+
+        // Final sanity check for extension if provided explicitly but not in filename
+        // (Only if we didn't just construct it in sequential block)
+        if (extension && !finalFilename.endsWith(`.${extension}`) && !sequential) {
+            // If filename was passed fully formed like "foo.png", we don't double append
+            // If filename was just "foo", we might need to append
+            if (!finalFilename.includes('.')) {
+                finalFilename = `${finalFilename}.${extension}`;
+            }
+        }
 
         // Create file in directory
         const fileHandle = await directoryHandle.getFileHandle(finalFilename, { create: true });
@@ -228,22 +303,35 @@ export async function saveFileFromUrl(url: string, filename?: string): Promise<b
     }
 }
 
+export interface FileToSave {
+    url: string;
+    extension?: string;
+    filename?: string;
+    sequential?: boolean;
+}
+
 /**
  * Save multiple files from URLs
- * @param urls Array of file URLs to save
+ * @param files Array of file info objects with url and optional extension
  * @returns Number of successfully saved files
  */
-export async function saveMultipleFiles(urls: string[]): Promise<number> {
+export async function saveMultipleFiles(files: (string | FileToSave)[]): Promise<number> {
     let successCount = 0;
 
-    for (const url of urls) {
+    for (const file of files) {
         try {
-            await saveFileFromUrl(url);
+            if (typeof file === 'string') {
+                await saveFileFromUrl(file);
+            } else {
+                await saveFileFromUrl(file.url, file.filename, file.extension, file.sequential);
+            }
             successCount++;
         } catch (e) {
+            const url = typeof file === 'string' ? file : file.url;
             console.error(`[AutoSave] Failed to save ${url}:`, e);
         }
     }
 
     return successCount;
 }
+

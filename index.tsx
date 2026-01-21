@@ -13,8 +13,7 @@ const root = createRoot(rootElement);
 // This fixes "object with keys {default}" error when the environment imports the module namespace
 const Component = (App as any).default ? (App as any).default : App;
 
+// Note: StrictMode removed to prevent double task submission in development
 root.render(
-  <React.StrictMode>
-    <Component />
-  </React.StrictMode>
+  <Component />
 );

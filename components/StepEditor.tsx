@@ -1,27 +1,44 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { NodeInfo } from '../types';
-import { Upload, Type, List, FileImage, Play, Mic, PlayCircle, AlertCircle, Loader2, Sliders, X, UploadCloud, FileAudio, FileVideo, ChevronDown, Image as ImageIcon, Layers, Settings } from 'lucide-react';
-import { uploadFile } from '../services/api';
-import BatchSettingsModal from './BatchSettingsModal';
+import { NodeInfo, WebAppInfo, DecodeConfig } from '../types';
+import { parseListOptions } from '../utils/nodeUtils';
+import { Upload, Type, List, FileImage, Play, Mic, PlayCircle, AlertCircle, Loader2, Sliders, X, UploadCloud, FileAudio, FileVideo, ChevronDown, Image as ImageIcon, Layers, Settings, Info, Lock } from 'lucide-react';
+import { uploadFile, buildFileUrl } from '../services/api';
+import BatchSettingsModal, { PendingFilesMap } from './BatchSettingsModal';
+import AppInfoModal from './AppInfoModal';
+
 
 interface StepEditorProps {
     nodes: NodeInfo[];
-    apiKey: string;
+    apiKeys: string[];
     isConnected: boolean;
+    runType: 'none' | 'single' | 'batch';
+    webAppInfo?: WebAppInfo | null;
     onBack: () => void;
-    onRun: (updatedNodes: NodeInfo[], batchList?: NodeInfo[][]) => void;
+    onRun: (updatedNodes: NodeInfo[], batchList?: NodeInfo[][], pendingFiles?: PendingFilesMap, decodeConfig?: DecodeConfig, batchTaskName?: string) => void;
+    onCancel: () => void;
+    decodeConfig?: DecodeConfig;
+    failedBatchIndices?: Set<number>;  // 失败任务的索引集合
+    onRetryTask?: (taskNodes: NodeInfo[], originalIndex: number, pendingFiles: PendingFilesMap) => void;  // 单个任务重试回调，传递当前编辑的节点数据
 }
 
-const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onRun }) => {
+const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, decodeConfig, failedBatchIndices = new Set(), onRetryTask }) => {
     const [localNodes, setLocalNodes] = useState<NodeInfo[]>(nodes);
     const [uploadingState, setUploadingState] = useState<Record<string, boolean>>({});
     const [errors, setErrors] = useState<Record<string, string>>({});
-    
+
+
+
     // Batch settings state
     const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
     const [batchList, setBatchList] = useState<NodeInfo[][]>([]);
+    const [pendingFiles, setPendingFiles] = useState<PendingFilesMap>({});
+    const [batchTaskName, setBatchTaskName] = useState<string>('');
 
-    // Store object URLs for previewing images immediately after selection
+    // App info modal state
+    const [isAppInfoModalOpen, setIsAppInfoModalOpen] = useState(false);
+
+    // Decode settings modal state
+
     const [previews, setPreviews] = useState<Record<string, string>>({});
     // Track drag state for each node
     const [dragActive, setDragActive] = useState<Record<string, boolean>>({});
@@ -41,8 +58,10 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
         setLocalNodes(nodes);
         // Reset broken images on new node load
         setBrokenImages({});
-        // Reset batch list when nodes configuration changes to prevent stale parameters
+        // Reset batch list and pending files when nodes configuration changes
         setBatchList([]);
+        setPendingFiles({});
+        setBatchTaskName('');
     }, [nodes]);
 
     // Cleanup object URLs to avoid memory leaks
@@ -56,6 +75,40 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
         const newNodes = [...localNodes];
         newNodes[index].fieldValue = val;
         setLocalNodes(newNodes);
+    };
+
+    const handleClearFile = (index: number) => {
+        const node = localNodes[index];
+        const key = node.nodeId + '_' + index;
+
+        // Clear the field value
+        const newNodes = [...localNodes];
+        newNodes[index].fieldValue = '';
+        setLocalNodes(newNodes);
+
+        // Clear preview if exists
+        if (previews[key]) {
+            URL.revokeObjectURL(previews[key]);
+            setPreviews(prev => {
+                const updated = { ...prev };
+                delete updated[key];
+                return updated;
+            });
+        }
+
+        // Clear broken state
+        setBrokenImages(prev => {
+            const updated = { ...prev };
+            delete updated[key];
+            return updated;
+        });
+
+        // Clear any errors
+        setErrors(prev => {
+            const updated = { ...prev };
+            delete updated[key];
+            return updated;
+        });
     };
 
     const processFile = async (index: number, file: File) => {
@@ -75,7 +128,9 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
         setErrors(prev => ({ ...prev, [key]: '' }));
 
         try {
-            const result = await uploadFile(apiKey, file);
+            // Use first API key for file uploads
+            const primaryApiKey = apiKeys[0] || '';
+            const result = await uploadFile(primaryApiKey, file);
             const newNodes = [...localNodes];
             newNodes[index].fieldValue = result.fileName;
             setLocalNodes(newNodes);
@@ -115,32 +170,6 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
         }
     };
 
-    const parseListOptions = (node: NodeInfo): string[] => {
-        // Fix: Only treat as LIST if the API explicitly says so.
-        // Otherwise metadata in fieldData (like "min:0, max:1" for numbers) causes false positives.
-        if (node.fieldType !== 'LIST') return [];
-
-        if (!node.fieldData) return [];
-        try {
-            const parsed = JSON.parse(node.fieldData);
-            if (Array.isArray(parsed)) {
-                // Handle special structure: [["Option A", "Option B"], {"default": "Option A"}]
-                if (parsed.length > 0 && Array.isArray(parsed[0])) {
-                    return parsed[0].map((item: any) => String(item));
-                }
-                // Handle simple array: ["Option A", "Option B"]
-                return parsed.map((item: any) => String(item));
-            }
-            return [];
-        } catch (e) {
-            // Handle comma-separated string: "Option A, Option B"
-            if (typeof node.fieldData === 'string' && node.fieldData.includes(',')) {
-                return node.fieldData.split(',').map(s => s.trim()).filter(Boolean);
-            }
-            return [];
-        }
-    };
-
     const looksLikeUrl = (s: string) => /^(https?:\/\/|data:)/i.test(s);
 
     const renderNodeInput = (node: NodeInfo, index: number) => {
@@ -154,9 +183,18 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
         const listOptions = parseListOptions(node);
         const effectiveType = listOptions.length > 0 ? 'LIST' : node.fieldType;
 
+        // Build proper image URL from filename or URL
+        const getImageSrc = (value: string) => {
+            if (!value) return '';
+            // Use buildFileUrl to convert filename to full URL
+            return buildFileUrl(value);
+        };
+
         switch (effectiveType) {
             case 'IMAGE':
-                const showImage = previewUrl || (node.fieldValue && looksLikeUrl(node.fieldValue) && !brokenImages[key]);
+                // 只有用户新上传的图片（有 previewUrl）才显示预览
+                // API 返回的已有文件名需要认证才能预览，所以直接显示友好提示
+                const showImage = previewUrl && !brokenImages[key];
 
                 return (
                     <div className="mt-2">
@@ -195,12 +233,12 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
                                         <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">等待文件上传中...</p>
                                     </div>
                                 ) : showImage ? (
-                                    <div className="relative w-full bg-slate-100 dark:bg-slate-950/50 flex justify-center items-center">
+                                    <div className="relative w-full h-[220px] bg-slate-100 dark:bg-slate-950/50 flex justify-center items-center">
                                         <img
-                                            src={previewUrl || node.fieldValue}
+                                            src={previewUrl}
                                             alt="Preview"
                                             onError={() => setBrokenImages(prev => ({ ...prev, [key]: true }))}
-                                            className="w-full h-auto max-h-[400px] object-contain"
+                                            className="max-w-full max-h-full object-contain"
                                         />
                                         {/* Hover Overlay */}
                                         <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover/drop:opacity-100 transition-opacity flex flex-col items-center justify-center backdrop-blur-[2px]">
@@ -208,6 +246,18 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
                                             <span className="text-white font-semibold text-sm px-4 py-2 bg-white/10 rounded-full border border-white/20">
                                                 点击或拖拽替换图片
                                             </span>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    handleClearFile(index);
+                                                }}
+                                                className="mt-3 flex items-center gap-1 px-3 py-1.5 text-xs text-white bg-red-500/80 hover:bg-red-600 rounded-full border border-white/20 transition-colors"
+                                            >
+                                                <X className="w-3 h-3" />
+                                                清除图片
+                                            </button>
                                         </div>
                                     </div>
                                 ) : (
@@ -223,12 +273,26 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
                                                         {node.fieldValue}
                                                     </p>
                                                 </div>
-                                                <p className="text-xs text-slate-400 mt-3">
-                                                    {brokenImages[key] ? "预览加载失败，但文件已选中" : "文件已选中"}
+                                                <p className="text-xs text-emerald-500 dark:text-emerald-400 mt-3">
+                                                    ✓ 图片已就绪，可直接运行
                                                 </p>
-                                                <p className="text-sm text-brand-500 font-medium mt-4 group-hover/drop:underline underline-offset-4">
-                                                    点击或拖拽以替换
-                                                </p>
+                                                <div className="flex items-center gap-3 mt-4">
+                                                    <span className="text-sm text-brand-500 font-medium group-hover/drop:underline underline-offset-4">
+                                                        点击替换
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            handleClearFile(index);
+                                                        }}
+                                                        className="flex items-center gap-1 px-2.5 py-1 text-xs text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/30 rounded-full border border-red-200 dark:border-red-800/50 transition-colors"
+                                                    >
+                                                        <X className="w-3 h-3" />
+                                                        清除
+                                                    </button>
+                                                </div>
                                             </>
                                         ) : (
                                             // Empty State
@@ -333,60 +397,65 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
                 return (
                     <div className="relative mt-2">
                         {listOptions.length > 0 ? (
+                            (() => {
+                                // 确保有有效的默认值
+                                const currentValue = node.fieldValue || (listOptions.length > 0 ? listOptions[0].index : '');
+                                // 如果当前值不在选项中，使用第一个选项
+                                const isValidValue = listOptions.some(opt => opt.index === currentValue);
+                                const effectiveValue = isValidValue ? currentValue : (listOptions.length > 0 ? listOptions[0].index : '');
+
+                                return (
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                            <List className="h-4 w-4" />
+                                        </div>
+                                        <select
+                                            value={effectiveValue}
+                                            onChange={(e) => handleTextChange(index, e.target.value)}
+                                            className="block w-full pl-9 pr-10 py-2.5 text-sm bg-white dark:bg-[#0F1115] border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all outline-none appearance-none text-slate-700 dark:text-slate-200 cursor-pointer hover:border-brand-400 dark:hover:border-brand-500"
+                                        >
+                                            {listOptions.map((opt) => (
+                                                <option key={opt.index} value={opt.index} className="dark:bg-slate-900">{opt.name}</option>
+                                            ))}
+                                        </select>
+                                        <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none text-slate-500">
+                                            <ChevronDown className="w-4 h-4" />
+                                        </div>
+                                    </div>
+                                );
+                            })()
+                        ) : (
+                            // 无法解析下拉选项时，回退到文本输入框，允许用户直接输入
                             <div className="relative">
                                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                                     <List className="h-4 w-4" />
                                 </div>
-                                <select
+                                <input
+                                    type="text"
                                     value={node.fieldValue}
                                     onChange={(e) => handleTextChange(index, e.target.value)}
-                                    className="block w-full pl-9 pr-10 py-2.5 text-sm bg-white dark:bg-[#0F1115] border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all outline-none appearance-none text-slate-700 dark:text-slate-200 cursor-pointer hover:border-brand-400 dark:hover:border-brand-500"
-                                >
-                                    {!node.fieldValue && <option value="" disabled>请选择</option>}
-                                    {listOptions.map((opt, i) => (
-                                        <option key={i} value={opt} className="dark:bg-slate-900">{opt}</option>
-                                    ))}
-                                </select>
-                                <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none text-slate-500">
-                                    <ChevronDown className="w-4 h-4" />
-                                </div>
-                            </div>
-                        ) : (
-                            // 无法解析下拉选项的 LIST 类型 - 显示警告提示
-                            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg">
-                                <div className="flex items-start gap-2">
-                                    <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                                    <div className="flex-1">
-                                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                                            暂不支持下拉列表参数
-                                        </p>
-                                        <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1 leading-relaxed">
-                                            此参数为应用内部切换节点，当前将使用应用默认值 <span className="font-mono font-bold">({node.fieldValue || '默认'})</span> 进行传递。
-                                        </p>
-                                    </div>
-                                </div>
+                                    className="block w-full pl-9 pr-3 py-2.5 bg-white dark:bg-[#0F1115] border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all outline-none text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400"
+                                    placeholder="请输入参数值"
+                                />
                             </div>
                         )}
                     </div>
                 );
 
             case 'SWITCH':
-                // 切换节点类型 - 显示警告提示
+                // 切换节点类型 - 提供文本输入作为回退
                 return (
-                    <div className="mt-2">
-                        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg">
-                            <div className="flex items-start gap-2">
-                                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                                <div className="flex-1">
-                                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                                        暂不支持下拉列表参数
-                                    </p>
-                                    <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1 leading-relaxed">
-                                        此参数为应用内部切换节点，当前将使用应用默认值 <span className="font-mono font-bold">({node.fieldValue || '默认'})</span> 进行传递。
-                                    </p>
-                                </div>
-                            </div>
+                    <div className="mt-2 relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                            <Sliders className="h-4 w-4" />
                         </div>
+                        <input
+                            type="text"
+                            value={node.fieldValue}
+                            onChange={(e) => handleTextChange(index, e.target.value)}
+                            className="block w-full pl-9 pr-3 py-2.5 bg-white dark:bg-[#0F1115] border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all outline-none text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400"
+                            placeholder="请输入开关值 (true/false 或其他)"
+                        />
                     </div>
                 );
 
@@ -407,7 +476,7 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
             default: // STRING and others
                 return (
                     <div className="mt-2 relative">
-                        {node.fieldType === 'STRING' && (node.nodeName.toLowerCase().includes('prompt') || node.description?.includes('文本') || primaryLabel(node).includes('提示词')) ? (
+                        {node.fieldType === 'STRING' ? (
                             <textarea
                                 rows={3}
                                 value={node.fieldValue}
@@ -463,11 +532,11 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
     const handleBatchRun = () => {
         if (batchList.length === 0) {
             // Fallback to normal run if no batch list
-            onRun(localNodes);
+            onRun(localNodes, undefined, undefined, decodeConfig);
             return;
         }
 
-        onRun(localNodes, batchList);
+        onRun(localNodes, batchList, pendingFiles, decodeConfig, batchTaskName);
     };
 
     return (
@@ -476,19 +545,52 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
                 isOpen={isBatchModalOpen}
                 onClose={() => setIsBatchModalOpen(false)}
                 nodes={localNodes}
-                onSave={setBatchList}
+                onSave={(newBatchList, newPendingFiles, newTaskName) => {
+                    setBatchList(newBatchList);
+                    setPendingFiles(newPendingFiles);
+                    setBatchTaskName(newTaskName);
+                }}
                 initialBatchList={batchList}
-                apiKey={apiKey}
+                initialTaskName={batchTaskName}
+                apiKey={apiKeys[0] || ''}
+                failedIndices={failedBatchIndices}
+                onRetryTask={onRetryTask}
             />
-            {/* Header - 固定在顶部 */}
+            {/* ... */}
             <div className="p-5 border-b border-slate-200 dark:border-slate-800/50 bg-white dark:bg-[#161920] shrink-0 z-10 shadow-sm">
-                <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800 dark:text-white">
-                    参数设置
-                    <span className="text-xs font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 px-2 py-0.5 rounded border border-brand-100 dark:border-brand-900/50">
-                        {nodes.length} 个节点
-                    </span>
-                </h2>
+                <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800 dark:text-white">
+                        参数设置
+                        <span className="text-xs font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 px-2 py-0.5 rounded border border-brand-100 dark:border-brand-900/50">
+                            {nodes.length} 个节点
+                        </span>
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        {/* Decode Settings Button */}
+                        {/* App Info Button */}
+                        {webAppInfo && (
+                            <button
+                                onClick={() => setIsAppInfoModalOpen(true)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors border border-slate-200 dark:border-slate-700 text-xs font-medium"
+                            >
+                                <Info className="w-3.5 h-3.5" />
+                                应用详情
+                            </button>
+                        )}
+                    </div>
+                </div>
             </div>
+
+            {/* App Info Modal */}
+            {webAppInfo && (
+                <AppInfoModal
+                    isOpen={isAppInfoModalOpen}
+                    onClose={() => setIsAppInfoModalOpen(false)}
+                    appInfo={webAppInfo}
+                />
+            )}
+
+
 
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth">
@@ -543,33 +645,56 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKey, isConnected, onR
 
             {/* Footer - 运行按钮固定在底部 */}
             <div className="bg-white dark:bg-[#161920] border-t border-slate-200 dark:border-slate-800/50 p-4 shrink-0 flex gap-3">
-                <button
-                    onClick={() => onRun(localNodes)}
-                    disabled={!isConnected || Object.values(uploadingState).some(Boolean)}
-                    className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-brand-200 dark:shadow-brand-900/20 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none disabled:shadow-none text-sm"
-                >
-                    <Play className="w-4 h-4 fill-current" />
-                    运行
-                </button>
+                {/* 单独运行按钮 */}
+                {runType === 'single' ? (
+                    <button
+                        onClick={onCancel}
+                        className="flex-1 flex justify-center items-center gap-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-red-200 dark:shadow-red-900/20 transform hover:-translate-y-0.5 transition-all text-sm"
+                    >
+                        <X className="w-4 h-4" />
+                        取消运行
+                    </button>
+                ) : (
+                    <button
+                        onClick={() => onRun(localNodes, undefined, undefined, decodeConfig)}
+                        disabled={!isConnected || Object.values(uploadingState).some(Boolean) || runType === 'batch'}
+                        className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-brand-200 dark:shadow-brand-900/20 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none disabled:shadow-none text-sm"
+                    >
+                        <Play className="w-4 h-4 fill-current" />
+                        运行
+                    </button>
+                )}
 
-                <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+                {/* 批量运行按钮 */}
+                {runType === 'batch' ? (
+                    <button
+                        onClick={onCancel}
+                        className="flex-1 flex justify-center items-center gap-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-red-200 dark:shadow-red-900/20 transform hover:-translate-y-0.5 transition-all text-sm"
+                    >
+                        <X className="w-4 h-4" />
+                        取消批量
+                    </button>
+                ) : (
                     <button
                         onClick={handleBatchRun}
-                        disabled={!isConnected || Object.values(uploadingState).some(Boolean)}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 hover:shadow-sm rounded-md transition-all disabled:opacity-50"
+                        disabled={!isConnected || Object.values(uploadingState).some(Boolean) || runType === 'single'}
+                        className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-orange-200 dark:shadow-orange-900/20 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none disabled:shadow-none text-sm"
                     >
                         <Layers className="w-4 h-4" />
                         批量运行
                     </button>
-                    <div className="w-px h-5 bg-slate-300 dark:bg-slate-600 mx-1"></div>
-                    <button
-                        onClick={() => setIsBatchModalOpen(true)}
-                        className="p-2 text-slate-500 hover:text-brand-500 dark:text-slate-400 dark:hover:text-brand-400 hover:bg-white dark:hover:bg-slate-700 hover:shadow-sm rounded-md transition-all"
-                        title="批量设置"
-                    >
-                        <Settings className="w-4 h-4" />
-                    </button>
-                </div>
+                )}
+
+                {/* 设置按钮 */}
+                <button
+                    onClick={() => setIsBatchModalOpen(true)}
+                    disabled={!isConnected || runType === 'single' || runType === 'batch'}
+                    className="flex items-center justify-center gap-2 px-5 py-3 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg shadow-sm transition-all disabled:opacity-50"
+                    title="批量设置"
+                >
+                    <Settings className="w-4 h-4" />
+                    <span>批量设置</span>
+                </button>
             </div>
         </div>
     );
