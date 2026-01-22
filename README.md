@@ -83,7 +83,8 @@ RunningHub AI Client is a modern desktop application built with React and Vite, 
 
 ## 🔗 Links & Acknowledgements
 
-- **RunningHub Official Site**: [https://www.runninghub.cn](https://www.runninghub.cn)
+- **RunningHub Official Site (China)**: [https://www.runninghub.cn](https://www.runninghub.cn)
+- **RunningHub Official Site (Global)**: [https://www.runninghub.ai](https://www.runninghub.ai)
 - **Registration Bonus**: [Click to register for 1000 RH Coins](https://www.runninghub.cn/?inviteCode=rh-v1123)
 - **Project Creator**: [Bilibili HooTooH](https://space.bilibili.com/527601196?spm_id_from=333.40164.0.0)
 - **Community Group**: QQ 543917943
@@ -182,7 +183,8 @@ RunningHub AI Client 是一个基于 React 和 Vite 构建的现代化桌面端�
 
 ## 🔗 相关链接与致谢
 
-- **RunningHub 官网**: [https://www.runninghub.cn](https://www.runninghub.cn)
+- **RunningHub 中国官网**: [https://www.runninghub.cn](https://www.runninghub.cn)
+- **RunningHub 国际官网**: [https://www.runninghub.ai](https://www.runninghub.ai)
 - **注册福利**: [点击注册送1000RH币](https://www.runninghub.cn/?inviteCode=rh-v1123)
 - **项目制作**: [哔站 HooTooH](https://space.bilibili.com/527601196?spm_id_from=333.40164.0.0)
 - **交流群**: QQ 543917943
