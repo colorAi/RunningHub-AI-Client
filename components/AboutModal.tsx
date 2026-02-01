@@ -27,7 +27,6 @@ const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
                     {/* Version Info */}
                     <div className="text-center pb-4 border-b border-slate-100 dark:border-slate-800/50">
                         <p className="font-semibold text-slate-800 dark:text-slate-200">RH 应用客户端</p>
-                        <p className="text-sm text-slate-500">v1.5.5 <span className="text-xs opacity-70">beta 0121</span></p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">

@@ -127,30 +127,38 @@ export async function initAutoSave(): Promise<string | null> {
     try {
         const savedHandle = await loadHandleFromDB();
         if (!savedHandle) {
-            return null;
+            return null; // 从未选择过目录
         }
 
-        // Verify we still have permission
+        // 验证权限
         // @ts-ignore - queryPermission is not in TypeScript types yet
         const permission = await savedHandle.queryPermission({ mode: 'readwrite' });
+        
         if (permission === 'granted') {
             directoryHandle = savedHandle;
             return savedHandle.name;
         }
 
-        // Try to request permission
+        // 尝试请求权限
         // @ts-ignore - requestPermission is not in TypeScript types yet
         const newPermission = await savedHandle.requestPermission({ mode: 'readwrite' });
+        
         if (newPermission === 'granted') {
             directoryHandle = savedHandle;
             return savedHandle.name;
         }
 
-        // Permission denied, clear the saved handle
+        // 权限被拒绝，清除保存的句柄
         await clearHandleFromDB();
         return null;
-    } catch (e) {
+    } catch (e: any) {
         console.error('Failed to init auto-save:', e);
+        // 如果是 AbortError，说明用户取消了权限请求
+        if (e.name === 'AbortError') {
+            return null;
+        }
+        // 其他错误，清除保存的句柄
+        await clearHandleFromDB();
         return null;
     }
 }
@@ -167,6 +175,42 @@ export function hasDirectoryAccess(): boolean {
  */
 export function getDirectoryName(): string | null {
     return directoryHandle?.name || null;
+}
+
+/**
+ * Check if we have valid access to the directory
+ */
+export async function checkDirectoryAccess(): Promise<boolean> {
+    if (!directoryHandle) {
+        return false;
+    }
+
+    try {
+        // @ts-ignore - queryPermission is not in TypeScript types yet
+        const permission = await directoryHandle.queryPermission({ mode: 'readwrite' });
+        return permission === 'granted';
+    } catch (e) {
+        console.error('Failed to check directory access:', e);
+        return false;
+    }
+}
+
+/**
+ * Request permission for the saved directory
+ */
+export async function requestDirectoryPermission(): Promise<boolean> {
+    if (!directoryHandle) {
+        return false;
+    }
+
+    try {
+        // @ts-ignore - requestPermission is not in TypeScript types yet
+        const permission = await directoryHandle.requestPermission({ mode: 'readwrite' });
+        return permission === 'granted';
+    } catch (e) {
+        console.error('Failed to request directory permission:', e);
+        return false;
+    }
 }
 
 /**
@@ -195,10 +239,13 @@ const sequenceCache = new Map<string, number>();
  */
 export async function saveFileFromUrl(url: string, filename?: string, extension?: string, sequential?: boolean): Promise<boolean> {
     if (!directoryHandle) {
-        throw new Error('未选择保存目录');
+        console.error('[AutoSave] Cannot save file: No directory handle available. Please select a directory in settings.');
+        throw new Error('未选择保存目录或目录访问权限已过期');
     }
 
     try {
+        console.log(`[AutoSave] Starting to save file: ${filename || url}`);
+        
         // Fetch the file
         const response = await fetch(url);
         if (!response.ok) {
@@ -206,6 +253,7 @@ export async function saveFileFromUrl(url: string, filename?: string, extension?
         }
 
         const blob = await response.blob();
+        console.log(`[AutoSave] Downloaded file, size: ${blob.size} bytes`);
 
         // Determine filename and extension
         let finalFilename = filename;
@@ -316,6 +364,12 @@ export interface FileToSave {
  * @returns Number of successfully saved files
  */
 export async function saveMultipleFiles(files: (string | FileToSave)[]): Promise<number> {
+    // 检查是否有有效的目录句柄
+    if (!directoryHandle) {
+        console.error('[AutoSave] No directory handle available. Auto-save is disabled.');
+        return 0;
+    }
+
     let successCount = 0;
 
     for (const file of files) {

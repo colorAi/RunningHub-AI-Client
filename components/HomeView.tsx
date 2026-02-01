@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { UP_RECOMMENDATIONS } from './recommendationsData';
+import FeishuDocEmbed from './FeishuDocEmbed';
 import { Globe, RefreshCw, Heart, MousePointerClick, Star, Play, AlertCircle, Loader2, User, Search, X } from 'lucide-react';
 import { NodeInfo, WebAppInfo, Favorite } from '../types';
 import { getNodeList, getOfficialAppList, getAppDetailById, AppListItem } from '../services/api';
@@ -20,7 +21,7 @@ interface AppCache {
 }
 
 const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, onToggleFavorite }) => {
-    const [activeTab, setActiveTab] = useState<'excellent' | 'official'>('excellent');
+    const [activeTab, setActiveTab] = useState<'campaign' | 'excellent' | 'official'>('campaign');
 
     // Cache for loaded app details
     const [appCache, setAppCache] = useState<AppCache>(() => {
@@ -56,7 +57,13 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
     const [showApiKeyAlert, setShowApiKeyAlert] = useState(false);
 
     useEffect(() => {
-        if (activeTab === 'official') {
+        if (activeTab === 'excellent') {
+            // Load official apps when switching to excellent tab
+            // This ensures official apps are ready when user switches to that tab
+            if (!hasLoadedOfficial) {
+                loadOfficialApps(true);
+            }
+        } else if (activeTab === 'official') {
             loadOfficialApps(true);
         }
     }, [activeTab, sortOrder]);
@@ -227,6 +234,15 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
             <div className="flex items-center justify-between mb-6 border-b border-slate-200 dark:border-slate-800 pb-2 shrink-0">
                 <div className="flex gap-6">
                     <button
+                        onClick={() => setActiveTab('campaign')}
+                        className={`pb-2 text-sm font-semibold transition-colors border-b-2 -mb-2.5 px-1 ${activeTab === 'campaign'
+                            ? 'text-brand-600 dark:text-brand-400 border-brand-600 dark:border-brand-400'
+                            : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-300'
+                            }`}
+                    >
+                        骏马新程 创作新生·2026
+                    </button>
+                    <button
                         onClick={() => setActiveTab('excellent')}
                         className={`pb-2 text-sm font-semibold transition-colors border-b-2 -mb-2.5 px-1 ${activeTab === 'excellent'
                             ? 'text-brand-600 dark:text-brand-400 border-brand-600 dark:border-brand-400'
@@ -247,6 +263,25 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {activeTab === 'excellent' && (
+                        <button
+                            onClick={handleRefreshAll}
+                            disabled={isRefreshing}
+                            className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 transition-colors disabled:opacity-50"
+                        >
+                            {isRefreshing ? (
+                                <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    <span>同步中 {refreshProgress}%</span>
+                                </>
+                            ) : (
+                                <>
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                    <span>同步应用信息</span>
+                                </>
+                            )}
+                        </button>
+                    )}
                     {activeTab === 'official' && (
                         <>
                             <div className="relative group">
@@ -285,29 +320,13 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
                             </select>
                         </>
                     )}
-
-                    <button
-                        onClick={handleRefreshAll}
-                        disabled={isRefreshing}
-                        className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 transition-colors disabled:opacity-50"
-                    >
-                        {isRefreshing ? (
-                            <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                <span>同步中 {refreshProgress}%</span>
-                            </>
-                        ) : (
-                            <>
-                                <RefreshCw className="w-3.5 h-3.5" />
-                                <span>同步应用信息</span>
-                            </>
-                        )}
-                    </button>
                 </div>
             </div>
 
             <div className="flex-1 min-h-0">
-                {activeTab === 'excellent' ? (
+                {activeTab === 'campaign' ? (
+                    <FeishuDocEmbed docUrl="https://tcn73taga4ku.feishu.cn/wiki/XckBwAIJyiHwo3kypwxcZr8anhb" />
+                ) : activeTab === 'excellent' ? (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 pb-10">
                         {allApps.map((app) => {
                             const cached = appCache[app.id];
@@ -446,10 +465,10 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
                                             )}
 
                                             {/* Author Badge (Top Left) */}
-                                            {app.authorInfo && (
+                                            {app.owner && (
                                                 <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 backdrop-blur-sm rounded-md flex items-center gap-1 z-10">
                                                     <User className="w-2.5 h-2.5 text-brand-400" />
-                                                    <span className="text-[10px] font-medium text-white/90">{app.authorInfo.name}</span>
+                                                    <span className="text-[10px] font-medium text-white/90">{app.owner.name}</span>
                                                 </div>
                                             )}
 
@@ -459,14 +478,14 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
                                                     e.stopPropagation();
                                                     // For official apps, currently we don't have full node info details cached from list
                                                     // But we can still favorite it. It will fetch details when clicked/loaded if needed.
-                                                    // Or better, fetch details now? 
+                                                    // Or better, fetch details now?
                                                     // The existing fav logic expects WebAppInfo and optionally nodes.
                                                     // The app list item has minimal info.
                                                     // Let's toggle without details, it might miss some info but id/name is there.
                                                     onToggleFavorite({
                                                         webappId: app.id,
                                                         name: app.name,
-                                                        upName: app.authorInfo?.name || 'Official',
+                                                        upName: app.owner?.name || 'Official',
                                                         // We pass part of what we have. API type mismatch might occur if strict.
                                                         // Using 'as any' or mapping carefully.
                                                         appInfo: {

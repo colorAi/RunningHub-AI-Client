@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Key, X, Plus, Trash2, Check, RefreshCw, Loader2, Coins, User, Save, FolderOpen, Building2 } from 'lucide-react';
 import { ApiKeyEntry, ApiKeyConfig, AutoSaveConfig, AccountInfo } from '../types';
-import { selectDirectory, clearDirectory, isFileSystemAccessSupported } from '../services/autoSaveService';
+import { selectDirectory, clearDirectory, isFileSystemAccessSupported, checkDirectoryAccess } from '../services/autoSaveService';
 import { getAccountInfo } from '../services/api';
 
 const STORAGE_KEY_SHARED_API = 'rh_shared_api_key';
@@ -27,6 +27,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [loadingAccount, setLoadingAccount] = useState(false);
   const [isSelectingDirectory, setIsSelectingDirectory] = useState(false);
   const [autoSaveSupported] = useState(isFileSystemAccessSupported());
+  const [permissionExpired, setPermissionExpired] = useState(false);
 
   // Internal state for sharedApiKey and saveApiKeyEnabled
   const [sharedApiKey, setSharedApiKey] = useState(() => {
@@ -45,9 +46,33 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [sharedApiKey]);
 
+  // 检查自动保存目录权限
+  useEffect(() => {
+    const checkPermission = async () => {
+      if (autoSaveConfig.enabled && autoSaveConfig.directoryName) {
+        const hasAccess = await checkDirectoryAccess();
+        if (!hasAccess) {
+          setPermissionExpired(true);
+        } else {
+          setPermissionExpired(false);
+        }
+      } else {
+        setPermissionExpired(false);
+      }
+    };
+    checkPermission();
+  }, [autoSaveConfig]);
+
   const handleSaveApiKeyToggle = (enabled: boolean) => {
     setSaveApiKeyEnabled(enabled);
     localStorage.setItem(STORAGE_KEY_SAVE_API, enabled.toString());
+    
+    // 如果取消勾选，立即清除 localStorage 中的 API Keys
+    if (!enabled) {
+      localStorage.removeItem('rh_api_keys_v2');
+      // 同时清空当前的 API Keys 输入框
+      onUpdateApiKeys([{ id: crypto.randomUUID(), apiKey: '', concurrency: 1 }], false);
+    }
   };
 
   if (!isOpen) return null;
@@ -82,7 +107,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     try {
       const dirName = await selectDirectory();
       if (dirName) {
-        onUpdateAutoSave({ ...autoSaveConfig, directoryName: dirName });
+        onUpdateAutoSave({ ...autoSaveConfig, enabled: true, directoryName: dirName });
+        setPermissionExpired(false);
       }
     } catch (e: any) {
       console.error('Directory selection failed:', e);
@@ -363,42 +389,49 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     ⚠️ 您的浏览器不支持文件系统访问 API，无法使用自动保存功能。
                   </div>
                 ) : (
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={handleSelectDirectory}
-                      disabled={isSelectingDirectory}
-                      className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium text-xs rounded-lg transition-colors shadow-sm"
-                    >
-                      {isSelectingDirectory ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <FolderOpen className="w-3.5 h-3.5" />
-                      )}
-                      选择目录
-                    </button>
+                  <>
+                    {permissionExpired && (
+                      <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/10 p-3 rounded-lg border border-amber-100 dark:border-amber-900/20 mb-3">
+                        ⚠️ 自动保存目录的访问权限已过期，请重新选择目录以继续使用自动保存功能。
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleSelectDirectory}
+                        disabled={isSelectingDirectory}
+                        className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium text-xs rounded-lg transition-colors shadow-sm"
+                      >
+                        {isSelectingDirectory ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <FolderOpen className="w-3.5 h-3.5" />
+                        )}
+                        {autoSaveConfig.directoryName ? '重新选择目录' : '选择目录'}
+                      </button>
 
-                    <div className="flex-1 min-w-0 flex items-center gap-2 bg-white dark:bg-slate-800/50 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700/50">
-                      {autoSaveConfig.directoryName ? (
-                        <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate flex-1 font-mono">
-                          {autoSaveConfig.directoryName}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-slate-400 italic">未选择保存目录...</span>
-                      )}
+                      <div className="flex-1 min-w-0 flex items-center gap-2 bg-white dark:bg-slate-800/50 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700/50">
+                        {autoSaveConfig.directoryName ? (
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate flex-1 font-mono">
+                            {autoSaveConfig.directoryName}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">未选择保存目录...</span>
+                        )}
 
-                      {autoSaveConfig.directoryName && (
-                        <button
-                          type="button"
-                          onClick={handleClearDirectory}
-                          className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                          title="清除目录"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                        {autoSaveConfig.directoryName && (
+                          <button
+                            type="button"
+                            onClick={handleClearDirectory}
+                            className="text-slate-400 hover:text-red-500 transition-colors p-1"
+                            title="清除目录"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             </div>

@@ -43,7 +43,25 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     useEffect(() => {
         if (isOpen && nodes && nodes.length > 0) {
             // If initial list is empty, start with one copy of current nodes
-            setBatchList(initialBatchList.length > 0 ? initialBatchList : [JSON.parse(JSON.stringify(nodes))]);
+            if (initialBatchList.length > 0) {
+                // Add unique IDs to existing batch tasks if they don't have one
+                const listWithIds = initialBatchList.map((row, idx) => {
+                    const existingTaskId = row[0]?._taskId;
+                    if (existingTaskId) {
+                        // Already has a task ID, keep it
+                        return row;
+                    }
+                    // Generate new unique ID for this row
+                    const taskId = `task-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 9)}`;
+                    return row.map(node => ({ ...node, _taskId: taskId }));
+                });
+                setBatchList(listWithIds);
+            } else {
+                // Create first row with unique ID
+                const taskId = `task-${Date.now()}-0-${Math.random().toString(36).substr(2, 9)}`;
+                const newRow = JSON.parse(JSON.stringify(nodes)).map(node => ({ ...node, _taskId: taskId }));
+                setBatchList([newRow]);
+            }
             setTaskName(initialTaskName);
         }
     }, [isOpen, initialBatchList, initialTaskName, nodes]);
@@ -170,11 +188,44 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     const handleAddRow = () => {
         // Deep copy current nodes to create a new row
         const newRow = JSON.parse(JSON.stringify(nodes));
-        setBatchList(prev => [...prev, newRow]);
+        // Generate unique ID for this batch task
+        const taskId = `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        // Add _taskId to each node in the row (they all share the same task ID)
+        const newRowWithId = newRow.map(node => ({ ...node, _taskId: taskId }));
+        setBatchList(prev => [...prev, newRowWithId]);
     };
 
     const handleRemoveRow = (index: number) => {
+        // Get the task ID of the row being deleted
+        const taskId = batchList[index]?.[0]?._taskId;
+        
         setBatchList(prev => prev.filter((_, i) => i !== index));
+        
+        // Also clean up pendingFiles and localPreviews for this task
+        if (taskId) {
+            setPendingFiles(prev => {
+                const newPendingFiles = { ...prev };
+                // Remove all entries that start with this taskId
+                Object.keys(newPendingFiles).forEach(key => {
+                    if (key.startsWith(`${taskId}|`)) {
+                        delete newPendingFiles[key];
+                    }
+                });
+                return newPendingFiles;
+            });
+            
+            setLocalPreviews(prev => {
+                const newPreviews = { ...prev };
+                // Remove all entries that start with this taskId
+                Object.keys(newPreviews).forEach(key => {
+                    if (key.startsWith(`${taskId}|`)) {
+                        URL.revokeObjectURL(newPreviews[key]);
+                        delete newPreviews[key];
+                    }
+                });
+                return newPreviews;
+            });
+        }
     };
 
     const handleFieldChange = (batchIndex: number, nodeId: string, fieldName: string, value: string) => {
@@ -191,7 +242,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     };
 
     const handleFileUpload = async (batchIndex: number, nodeId: string, fieldName: string, file: File) => {
-        const key = `${batchIndex}_${nodeId}_${fieldName}`;
+        // Use taskId if available, fallback to batchIndex for backward compatibility
+        const taskId = batchList[batchIndex]?.[0]?._taskId || `task-${batchIndex}`;
+        const key = `${taskId}|${nodeId}|${fieldName}`;
 
         // Create local preview immediately
         if (file.type.startsWith('image/')) {
@@ -296,9 +349,11 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 finalBatchList = [...batchList];
 
                 imageFiles.forEach((imgFile, index) => {
+                    let taskId;
                     if (index < existingRows) {
                         // Update existing row
                         const rowNodes = [...finalBatchList[index]];
+                        taskId = rowNodes[0]?._taskId;
                         const nodeIndex = findNodeIndex(rowNodes);
                         if (nodeIndex !== -1) {
                             rowNodes[nodeIndex] = { ...rowNodes[nodeIndex], fieldValue: imgFile.name };
@@ -307,6 +362,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                     } else {
                         // Add new row for extra images
                         const newRowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                        // Generate unique ID for new row
+                        taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                        newRowNodes.forEach(node => node._taskId = taskId);
                         const nodeIndex = findNodeIndex(newRowNodes);
                         if (nodeIndex !== -1) {
                             newRowNodes[nodeIndex].fieldValue = imgFile.name;
@@ -315,9 +373,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                     }
 
                     // Store File reference and preview
-                    // Use composite key!
+                    // Use taskId as key for proper cleanup on delete
                     const fieldName = targetFieldName || (finalBatchList[index] && findNodeIndex(finalBatchList[index]) !== -1 ? finalBatchList[index][findNodeIndex(finalBatchList[index])].fieldName : 'image');
-                    const key = `${index}|${targetNodeId}|${fieldName}`;
+                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
                     newPendingFiles[key] = imgFile.file;
                     newPreviews[key] = URL.createObjectURL(imgFile.file);
                 });
@@ -326,6 +384,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 finalBatchList = [];
                 imageFiles.forEach((imgFile, index) => {
                     const rowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                    // Generate unique ID for new row
+                    const taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                    rowNodes.forEach(node => node._taskId = taskId);
                     const nodeIndex = findNodeIndex(rowNodes);
                     let fieldName = 'image';
                     if (nodeIndex !== -1) {
@@ -334,7 +395,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                     }
                     finalBatchList.push(rowNodes);
 
-                    const key = `${index}|${targetNodeId}|${fieldName}`;
+                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
                     newPendingFiles[key] = imgFile.file;
                     newPreviews[key] = URL.createObjectURL(imgFile.file);
                 });
@@ -427,8 +488,10 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 finalBatchList = [...batchList];
 
                 videoFiles.forEach((vidFile, index) => {
+                    let taskId;
                     if (index < existingRows) {
                         const rowNodes = [...finalBatchList[index]];
+                        taskId = rowNodes[0]?._taskId;
                         const nodeIndex = findNodeIndex(rowNodes);
                         if (nodeIndex !== -1) {
                             rowNodes[nodeIndex] = { ...rowNodes[nodeIndex], fieldValue: vidFile.name };
@@ -436,6 +499,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                         }
                     } else {
                         const newRowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                        // Generate unique ID for new row
+                        taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                        newRowNodes.forEach(node => node._taskId = taskId);
                         const nodeIndex = findNodeIndex(newRowNodes);
                         if (nodeIndex !== -1) {
                             newRowNodes[nodeIndex].fieldValue = vidFile.name;
@@ -444,7 +510,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                     }
 
                     const fieldName = targetFieldName || (finalBatchList[index] && findNodeIndex(finalBatchList[index]) !== -1 ? finalBatchList[index][findNodeIndex(finalBatchList[index])].fieldName : 'video');
-                    const key = `${index}|${targetNodeId}|${fieldName}`;
+                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
                     newPendingFiles[key] = vidFile.file;
                     // No preview URL for videos (too heavy), just store as pending
                 });
@@ -452,6 +518,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 finalBatchList = [];
                 videoFiles.forEach((vidFile, index) => {
                     const rowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                    // Generate unique ID for new row
+                    const taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                    rowNodes.forEach(node => node._taskId = taskId);
                     const nodeIndex = findNodeIndex(rowNodes);
                     let fieldName = 'video';
                     if (nodeIndex !== -1) {
@@ -460,7 +529,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                     }
                     finalBatchList.push(rowNodes);
 
-                    const key = `${index}|${targetNodeId}|${fieldName}`;
+                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
                     newPendingFiles[key] = vidFile.file;
                 });
             }
@@ -567,6 +636,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                     } else {
                         // Add new row for extra lines
                         const newRowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                        // Generate unique ID for new row
+                        const taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                        newRowNodes.forEach(node => node._taskId = taskId);
                         const nodeIndex = findNodeIndex(newRowNodes);
                         if (nodeIndex !== -1) {
                             newRowNodes[nodeIndex].fieldValue = line.trim();
@@ -576,8 +648,11 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 });
             } else {
                 // No existing rows, create new ones
-                finalBatchList = lines.map((line: string) => {
+                finalBatchList = lines.map((line: string, index: number) => {
                     const rowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                    // Generate unique ID for new row
+                    const taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                    rowNodes.forEach(node => node._taskId = taskId);
                     const nodeIndex = findNodeIndex(rowNodes);
                     if (nodeIndex !== -1) {
                         rowNodes[nodeIndex].fieldValue = line.trim();
@@ -606,7 +681,9 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     // Helper to render simplified input based on type
     const renderBatchInput = (node: NodeInfo, batchIndex: number) => {
         const handleChange = (val: string) => handleFieldChange(batchIndex, node.nodeId, node.fieldName, val);
-        const key = `${batchIndex}|${node.nodeId}|${node.fieldName || ''}`; // SAFE FIELD NAME
+        // Use taskId if available, fallback to batchIndex for backward compatibility
+        const taskId = node._taskId || `task-${batchIndex}`;
+        const key = `${taskId}|${node.nodeId}|${node.fieldName || ''}`; // SAFE FIELD NAME
         const isUploading = uploadingState[key];
 
         // 1. Media Types (Image, Audio, Video) - Mini Drop Zone
@@ -772,8 +849,10 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                         ) : (
                             batchList.map((rowNodes, batchIndex) => {
                                 const isFailed = failedIndices.has(batchIndex);
+                                // Use _taskId as key for stable rendering, fallback to batchIndex
+                                const taskId = rowNodes[0]?._taskId || `task-${batchIndex}`;
                                 return (
-                                    <div key={batchIndex} className={`bg-white dark:bg-[#161920] rounded-lg border shadow-sm overflow-hidden flex flex-col shrink-0 ${isFailed ? 'border-red-300 dark:border-red-800' : 'border-slate-200 dark:border-slate-800'}`}>
+                                    <div key={taskId} className={`bg-white dark:bg-[#161920] rounded-lg border shadow-sm overflow-hidden flex flex-col shrink-0 ${isFailed ? 'border-red-300 dark:border-red-800' : 'border-slate-200 dark:border-slate-800'}`}>
                                         {/* Card Header */}
                                         <div className={`flex items-center justify-between px-3 py-2 border-b ${isFailed ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800'}`}>
                                             <span className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-2">

@@ -1,19 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Home, Star, Briefcase, Settings, User } from 'lucide-react';
+import { Home, Briefcase, Settings, User } from 'lucide-react';
 import HomeView from './components/HomeView';
-import FavoritesView from './components/FavoritesView';
 import StepConfig from './components/StepConfig';
 import StepEditor from './components/StepEditor';
 import StepRunning, { StepRunningRef } from './components/StepRunning';
-import StepResult from './components/StepResult';
+import WorkspacePanel from './components/WorkspacePanel';
 import SettingsModal from './components/SettingsModal';
 import ToolsView from './components/ToolsView';
 import DecodeSettingsModal from './components/DecodeSettingsModal';
 import Footer from './components/Footer';
 import TermsModal from './components/TermsModal';
 import AboutModal from './components/AboutModal';
-import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, DecodeConfig, HistoryItem, RecentApp, FailedTaskInfo } from './types';
-import { saveMultipleFiles, getDirectoryName, initAutoSave } from './services/autoSaveService';
+import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, DecodeConfig, HistoryItem, RecentApp, FailedTaskInfo, InstanceType } from './types';
+import { saveMultipleFiles, getDirectoryName, initAutoSave, checkDirectoryAccess } from './services/autoSaveService';
 import { PendingFilesMap } from './components/BatchSettingsModal';
 
 const STORAGE_KEY_API_KEYS = 'rh_api_keys_v2';
@@ -24,7 +23,7 @@ const STORAGE_KEY_RECENT = 'rh_recent_apps';
 
 function App() {
   // Global View State
-  const [currentView, setCurrentView] = useState<'home' | 'favorites' | 'workspace' | 'tools'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'workspace' | 'tools'>('home');
 
   // State
   const [webappId, setWebappId] = useState('');
@@ -52,6 +51,7 @@ function App() {
   });
 
   const [runType, setRunType] = useState<'none' | 'single' | 'batch' | 'result'>('none');
+  const [instanceType, setInstanceType] = useState<InstanceType>('default');
   const [activeBatchList, setActiveBatchList] = useState<NodeInfo[][] | undefined>(undefined);
   const [activePendingFiles, setActivePendingFiles] = useState<any>(undefined);
   const [batchResult, setBatchResult] = useState<{ logs: string[]; failedTasks: FailedTaskInfo[] } | null>(null);
@@ -72,8 +72,18 @@ function App() {
   const [autoSaveConfig, setAutoSaveConfig] = useState<AutoSaveConfig>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_AUTOSAVE);
-      return saved ? JSON.parse(saved) : { enabled: true, directoryName: '' };
-    } catch { return { enabled: true, directoryName: '' }; }
+      if (saved) {
+        const config = JSON.parse(saved);
+        // 只有当目录名存在时才启用自动保存
+        return {
+          enabled: config.enabled && !!config.directoryName,
+          directoryName: config.directoryName || null
+        };
+      }
+      return { enabled: false, directoryName: null };
+    } catch { 
+      return { enabled: false, directoryName: null }; 
+    }
   });
 
   // Favorites
@@ -107,19 +117,22 @@ function App() {
     const init = async () => {
       const dirName = await initAutoSave();
       if (dirName) {
-        const savedEnabled = localStorage.getItem('rh_autosave_config');
-        // Note: Using the specific config key correctly
-        if (savedEnabled) {
-          try {
-            const config = JSON.parse(savedEnabled);
-            setAutoSaveConfig({
-              enabled: config.enabled,
-              directoryName: dirName
-            });
-          } catch {
-            // ignore
-          }
-        }
+        // 成功恢复目录访问权限
+        setAutoSaveConfig(prev => ({
+          ...prev,
+          enabled: true,
+          directoryName: dirName
+        }));
+      } else {
+        // 无法恢复权限，禁用自动保存并清除无效配置
+        setAutoSaveConfig(prev => ({
+          ...prev,
+          enabled: false,
+          directoryName: null
+        }));
+        // 清除 localStorage 中的无效配置
+        localStorage.removeItem(STORAGE_KEY_AUTOSAVE);
+        console.log('[AutoSave] Cleared invalid auto-save configuration from localStorage');
       }
     };
     init();
@@ -161,10 +174,13 @@ function App() {
 
   // ...
 
-  const handleRun = (updatedNodes: NodeInfo[], batchList?: NodeInfo[][], pendingFiles?: any, decodeConfig?: DecodeConfig, taskName?: string) => {
+  const handleRun = (updatedNodes: NodeInfo[], batchList?: NodeInfo[][], pendingFiles?: any, decodeConfig?: DecodeConfig, taskName?: string, instanceTypeParam?: InstanceType) => {
     setNodes(updatedNodes);
     if (decodeConfig) {
       setActiveDecodeConfig(decodeConfig);
+    }
+    if (instanceTypeParam) {
+      setInstanceType(instanceTypeParam);
     }
     if (batchList && batchList.length > 0) {
       setActiveBatchList(batchList);
@@ -270,6 +286,13 @@ function App() {
     setCurrentView('workspace');
   };
 
+  const handleCancelRun = () => {
+    // 调用 StepRunning 的取消方法
+    if (stepRunningRef.current) {
+      stepRunningRef.current.cancelWithSummary();
+    }
+  };
+
   const handleAgreeTerms = () => {
     localStorage.setItem('rh_terms_agreed', 'true');
     setShowTermsModal(false);
@@ -281,9 +304,8 @@ function App() {
     setShowTermsModal(true);
   };
 
-  const tabs: { id: 'home' | 'favorites' | 'workspace' | 'tools'; label: string; icon: React.FC<any> }[] = [
+  const tabs: { id: 'home' | 'workspace' | 'tools'; label: string; icon: React.FC<any> }[] = [
     { id: 'home', label: '首页', icon: Home },
-    { id: 'favorites', label: '我的收藏', icon: Star },
     { id: 'workspace', label: '工作区', icon: Briefcase },
     { id: 'tools', label: '工具箱', icon: Settings },
   ];
@@ -298,7 +320,7 @@ function App() {
       <header className="bg-white dark:bg-[#0F1115] border-b border-slate-200 dark:border-slate-800/50 h-14 flex items-center justify-between pr-4 shrink-0 z-20 shadow-sm">
         <div className="flex items-center h-full gap-3">
           <img src="/r.png" alt="RunningHub" className="h-10 w-auto ml-2" />
-          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端(非官方) v1.5.5 <span className="text-xs opacity-70">beta 0121v2</span></span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端(非官方) v1.5.6 <span className="text-xs opacity-70">beta 0128v1</span></span>
           <button
             onClick={handleOpenAbout}
             className="ml-2 px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"
@@ -360,15 +382,6 @@ function App() {
           />
         )}
 
-        {currentView === 'favorites' && (
-          <FavoritesView
-            favorites={favorites}
-            onSelectApp={handleSelectFavorite}
-            apiKeys={apiKeysList}
-            onUpdateFavorites={handleUpdateFavorites}
-          />
-        )}
-
         {currentView === 'tools' && (
           <ToolsView
             onOpenDecodeSettings={() => setIsDecodeSettingsOpen(true)}
@@ -409,9 +422,11 @@ function App() {
               webAppInfo={webAppInfo}
               onBack={() => { }}
               onRun={handleRun}
-              onCancel={() => { }}
+              onCancel={handleCancelRun}
               decodeConfig={activeDecodeConfig}
               failedBatchIndices={failedBatchIndices}
+              instanceType={instanceType}
+              onInstanceTypeChange={setInstanceType}
               onRetryTask={(taskNodes, originalIndex, pendingFiles) => {
                 // 使用传入的 taskNodes (包含用户可能的修改)
                 if (taskNodes) {
@@ -440,16 +455,21 @@ function App() {
                 decodeConfig={activeDecodeConfig}
                 autoSaveEnabled={autoSaveConfig.enabled}
                 batchTaskName={batchTaskName}
+                instanceType={instanceType}
                 onComplete={handleComplete}
                 onBack={() => setRunType('none')}
                 onBatchComplete={handleBatchComplete}
                 onBatchCancel={handleBatchComplete}
               />
             ) : (
-              <StepResult
+              <WorkspacePanel
                 history={history}
+                favorites={favorites}
                 decodeConfig={activeDecodeConfig}
-                onClear={() => setHistory([])}
+                apiKeys={apiKeysList}
+                onClearHistory={() => setHistory([])}
+                onUpdateFavorites={handleUpdateFavorites}
+                onSelectFavorite={handleSelectFavorite}
               />
             )}
           </div>

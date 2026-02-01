@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, forwardRef, useImperativeHandle } from 'react';
 import { submitTask, queryTaskOutputs, getAccountInfo, uploadFile } from '../services/api';
-import { NodeInfo, TaskOutput, PromptTips, ApiKeyConfig, DecodeConfig, FailedTaskInfo } from '../types';
+import { NodeInfo, TaskOutput, PromptTips, ApiKeyConfig, DecodeConfig, FailedTaskInfo, InstanceType } from '../types';
 import { Loader2, CheckCircle2, XCircle, Clock, AlertTriangle, Terminal, Activity, Layers, FolderOpen, Coins } from 'lucide-react';
 import { saveMultipleFiles, getDirectoryName } from '../services/autoSaveService';
 import { PendingFilesMap } from './BatchSettingsModal';
@@ -19,16 +19,18 @@ interface StepRunningProps {
   onBatchComplete: (summaryLogs: string[], failedTasks: FailedTaskInfo[]) => void;
   onBatchCancel?: (summaryLogs: string[], failedTasks: FailedTaskInfo[]) => void;
   batchTaskName?: string;
+  instanceType?: InstanceType;
 }
 
 export interface StepRunningRef {
   cancelWithSummary: () => void;
 }
 
-const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, webappId, nodes, batchList, pendingFiles, autoSaveEnabled, decodeConfig, batchTaskName, onComplete, onBack, onBatchComplete, onBatchCancel }, ref) => {
+const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, webappId, nodes, batchList, pendingFiles, autoSaveEnabled, decodeConfig, batchTaskName, instanceType, onComplete, onBack, onBatchComplete, onBatchCancel }, ref) => {
   const [status, setStatus] = useState<'INIT' | 'SUBMITTING' | 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILED'>('INIT');
   const [logs, setLogs] = useState<string[]>([]);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [cancelMessage, setCancelMessage] = useState<string | null>(null);
 
   // Batch state
   const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
@@ -277,9 +279,15 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
           let nodesToSubmit = taskNodes;
           if (pendingFiles && Object.keys(pendingFiles).length > 0) {
             const filesToUpload: { nodeId: string; fieldName: string; file: File }[] = [];
+            
+            // Get the taskId for current batch task
+            const currentTaskId = taskNodes[0]?._taskId || `task-${taskIndex}`;
+            
             for (const [key, file] of Object.entries(pendingFiles) as [string, File][]) {
-              const [batchIdx, nodeId, fieldName] = key.split('|');
-              if (parseInt(batchIdx) === taskIndex) {
+              const [taskId, nodeId, fieldName] = key.split('|');
+              
+              // Match by taskId (new format) or fallback to batchIndex (old format for compatibility)
+              if (taskId === currentTaskId || taskId === `task-${taskIndex}`) {
                 filesToUpload.push({ nodeId, fieldName, file });
               }
             }
@@ -304,7 +312,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
 
           // 1. Submit Task
           setStatus('RUNNING');
-          const submitRes = await submitTask(apiKey, webappId, nodesToSubmit);
+          const submitRes = await submitTask(apiKey, webappId, nodesToSubmit, instanceType);
 
           if (!active) return;
 
@@ -439,7 +447,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
         setStatus('SUBMITTING');
         addLog('开始提交任务，请等待...');
 
-        const submitRes = await submitTask(apiKey, webappId, taskNodes);
+        const submitRes = await submitTask(apiKey, webappId, taskNodes, instanceType);
 
         if (!active) return;
 
@@ -488,8 +496,41 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
                 if (decodedCount > 0) {
                   addLog(`✅ 已解码 ${decodedCount} 个文件`);
                 }
+                
+                // Auto-save for single task
+                if (autoSaveEnabled) {
+                  try {
+                    const filesToSave = decodedOutputs.map(o => ({
+                      url: o.fileUrl,
+                      extension: o.fileType
+                    }));
+                    const savedCount = await saveMultipleFiles(filesToSave);
+                    if (savedCount > 0) {
+                      addLog(`📁 已保存 ${savedCount} 个文件`);
+                    }
+                  } catch (e: any) {
+                    addLog(`⚠️ 保存失败: ${e.message}`);
+                  }
+                }
+                
                 onComplete(decodedOutputs, taskId);
               } else {
+                // Auto-save for single task (without decode)
+                if (autoSaveEnabled) {
+                  try {
+                    const filesToSave = res.data.map(o => ({
+                      url: o.fileUrl,
+                      extension: o.fileType
+                    }));
+                    const savedCount = await saveMultipleFiles(filesToSave);
+                    if (savedCount > 0) {
+                      addLog(`📁 已保存 ${savedCount} 个文件`);
+                    }
+                  } catch (e: any) {
+                    addLog(`⚠️ 保存失败: ${e.message}`);
+                  }
+                }
+                
                 onComplete(res.data, taskId);
               }
               return;
@@ -567,14 +608,14 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
   // Handle cancel for batch tasks - generate summary before cancelling
   const handleBatchCancel = async () => {
     const isBatch = !!batchList && batchList.length > 0;
-    if (!isBatch || !onBatchCancel) {
-      onBack();
-      return;
-    }
-
+    
     const summaryLogs: string[] = [];
-    summaryLogs.push(`⚠️ 批量任务已被取消`);
-    summaryLogs.push(`📊 已完成: ${currentBatchIndex} / ${batchTotal} 个任务`);
+    summaryLogs.push(`⚠️ 任务已被取消`);
+    summaryLogs.push(`ℹ️ 注意：此操作仅取消客户端状态，服务器端的任务仍会继续执行`);
+    
+    if (isBatch) {
+      summaryLogs.push(`📊 已完成: ${currentBatchIndex} / ${batchTotal} 个任务`);
+    }
 
     const dirName = getDirectoryName();
     if (autoSaveEnabled && dirName && savedFilesCount > 0) {
@@ -593,8 +634,18 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
     } catch (e) {
       // ignore error
     }
-
-    onBatchCancel(summaryLogs, []); // 取消时传递空数组，因为失败信息可能不完整
+    
+    // 调用适当的回调
+    if (isBatch && onBatchCancel) {
+      onBatchCancel(summaryLogs, []); // 取消时传递空数组，因为失败信息可能不完整
+    } else {
+      // 单任务取消，显示提示信息
+      setCancelMessage(summaryLogs.join('\n'));
+      // 延迟返回，让用户看到提示
+      setTimeout(() => {
+        onBack();
+      }, 3000);
+    }
   };
 
   // Expose cancel method via ref for parent component
@@ -667,6 +718,17 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
             </div>
             <pre className="text-[10px] text-red-600 dark:text-red-300 font-mono whitespace-pre-wrap break-all">
               {errorDetails}
+            </pre>
+          </div>
+        )}
+
+        {cancelMessage && (
+          <div className="mt-6 w-full bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/50 rounded-lg p-3">
+            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-xs font-bold mb-1">
+              <AlertTriangle className="w-4 h-4" /> 取消提示
+            </div>
+            <pre className="text-[10px] text-amber-600 dark:text-amber-300 font-mono whitespace-pre-wrap break-all">
+              {cancelMessage}
             </pre>
           </div>
         )}

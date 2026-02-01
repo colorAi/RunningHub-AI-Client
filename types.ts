@@ -6,6 +6,7 @@ export interface NodeInfo {
   fieldType: 'IMAGE' | 'AUDIO' | 'VIDEO' | 'STRING' | 'INT' | 'FLOAT' | 'LIST' | 'SWITCH';
   description?: string;
   fieldData?: string; // Often contains options for LIST types (sometimes JSON string, sometimes comma separated)
+  _taskId?: string; // Unique identifier for batch task rows (used as React key)
 }
 
 export interface ListOption {
@@ -142,3 +143,6 @@ export interface FailedTaskInfo {
   errorMessage: string;    // 错误信息
   timestamp: number;       // 失败时间
 }
+
+// InstanceType - 机器实例类型
+export type InstanceType = 'default' | 'plus';

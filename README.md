@@ -10,7 +10,7 @@
 
 ## 📅 Changelog
 
-### v1.5.5 beta0121 v2
+### v1.5.6 beta 0127v2
 - **🎨 UI Refactor**: Brand new interface design, providing a more modern visual experience.
 - **🏪 Official App Store**: Added official app store, supporting **app search** to easily find tools.
 - **🃏 App Cards**: Optimized app display with card view.
@@ -110,7 +110,7 @@ RunningHub AI Client is a modern desktop application built with React and Vite, 
 
 ## 📅 更新日志 (Changelog)
 
-### v1.5.5 beta0121 v2
+### v1.5.6 beta 0127v2
 - **🎨 UI 重构**: 界面全新改版，提供更现代化的视觉体验。
 - **🏪 官方应用商城**: 新增官方应用商城，支持**搜索应用**，轻松获取所需工具。
 - **🃏 应用卡片**: 优化应用展示形式，增加应用卡片显示。

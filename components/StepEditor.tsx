@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { NodeInfo, WebAppInfo, DecodeConfig } from '../types';
+import { NodeInfo, WebAppInfo, DecodeConfig, InstanceType } from '../types';
 import { parseListOptions } from '../utils/nodeUtils';
-import { Upload, Type, List, FileImage, Play, Mic, PlayCircle, AlertCircle, Loader2, Sliders, X, UploadCloud, FileAudio, FileVideo, ChevronDown, Image as ImageIcon, Layers, Settings, Info, Lock } from 'lucide-react';
+import { Upload, Type, List, FileImage, Play, Mic, PlayCircle, AlertCircle, Loader2, Sliders, X, UploadCloud, FileAudio, FileVideo, ChevronDown, Image as ImageIcon, Layers, Settings, Info, Lock, Zap } from 'lucide-react';
 import { uploadFile, buildFileUrl } from '../services/api';
 import BatchSettingsModal, { PendingFilesMap } from './BatchSettingsModal';
 import AppInfoModal from './AppInfoModal';
@@ -14,14 +14,16 @@ interface StepEditorProps {
     runType: 'none' | 'single' | 'batch';
     webAppInfo?: WebAppInfo | null;
     onBack: () => void;
-    onRun: (updatedNodes: NodeInfo[], batchList?: NodeInfo[][], pendingFiles?: PendingFilesMap, decodeConfig?: DecodeConfig, batchTaskName?: string) => void;
+    onRun: (updatedNodes: NodeInfo[], batchList?: NodeInfo[][], pendingFiles?: PendingFilesMap, decodeConfig?: DecodeConfig, batchTaskName?: string, instanceType?: InstanceType) => void;
     onCancel: () => void;
     decodeConfig?: DecodeConfig;
     failedBatchIndices?: Set<number>;  // 失败任务的索引集合
     onRetryTask?: (taskNodes: NodeInfo[], originalIndex: number, pendingFiles: PendingFilesMap) => void;  // 单个任务重试回调，传递当前编辑的节点数据
+    instanceType?: InstanceType;  // 新增
+    onInstanceTypeChange?: (type: InstanceType) => void;  // 新增
 }
 
-const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, decodeConfig, failedBatchIndices = new Set(), onRetryTask }) => {
+const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, decodeConfig, failedBatchIndices = new Set(), onRetryTask, instanceType = 'default', onInstanceTypeChange }) => {
     const [localNodes, setLocalNodes] = useState<NodeInfo[]>(nodes);
     const [uploadingState, setUploadingState] = useState<Record<string, boolean>>({});
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -532,11 +534,11 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
     const handleBatchRun = () => {
         if (batchList.length === 0) {
             // Fallback to normal run if no batch list
-            onRun(localNodes, undefined, undefined, decodeConfig);
+            onRun(localNodes, undefined, undefined, decodeConfig, undefined, instanceType);
             return;
         }
 
-        onRun(localNodes, batchList, pendingFiles, decodeConfig, batchTaskName);
+        onRun(localNodes, batchList, pendingFiles, decodeConfig, batchTaskName, instanceType);
     };
 
     return (
@@ -566,7 +568,20 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
                         </span>
                     </h2>
                     <div className="flex items-center gap-2">
-                        {/* Decode Settings Button */}
+                        {/* PLUS 模式切换按钮 */}
+                        <button
+                            onClick={() => onInstanceTypeChange?.(instanceType === 'default' ? 'plus' : 'default')}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                                instanceType === 'plus'
+                                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700'
+                            }`}
+                            title={instanceType === 'plus' ? 'PLUS 模式已开启（48G）' : 'PLUS 模式已关闭（24G）'}
+                        >
+                            <Zap className={`w-3.5 h-3.5 ${instanceType === 'plus' ? 'animate-pulse' : ''}`} />
+                            PLUS 模式
+                        </button>
+
                         {/* App Info Button */}
                         {webAppInfo && (
                             <button

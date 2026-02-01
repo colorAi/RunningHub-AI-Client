@@ -1,4 +1,4 @@
-import { ApiResponse, NodeInfo, SubmitTaskData, UploadData, TaskOutput, WebAppInfo } from '../types';
+import { ApiResponse, NodeInfo, SubmitTaskData, UploadData, TaskOutput, WebAppInfo, InstanceType } from '../types';
 
 const API_HOST = "https://www.runninghub.cn";
 
@@ -91,13 +91,19 @@ export const uploadFile = async (apiKey: string, file: File): Promise<UploadData
 /**
  * Submit Task
  */
-export const submitTask = async (apiKey: string, webappId: string, nodeInfoList: NodeInfo[]): Promise<SubmitTaskData> => {
+export const submitTask = async (
+  apiKey: string,
+  webappId: string,
+  nodeInfoList: NodeInfo[],
+  instanceType?: InstanceType
+): Promise<SubmitTaskData> => {
   const url = `${API_HOST}/task/openapi/ai-app/run`;
 
   const payload = {
     webappId,
     apiKey,
-    nodeInfoList
+    nodeInfoList,
+    ...(instanceType && { instanceType })
   };
 
   const response = await fetch(url, {
@@ -189,7 +195,8 @@ export interface AppListItem {
     imageHeight: number;
     type: string;
   }[];
-  authorInfo?: {
+  owner?: {
+    id: string;
     name: string;
     avatar: string;
   };
