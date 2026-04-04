@@ -106,13 +106,13 @@ const BatchReminderModal: React.FC<BatchReminderModalProps> = ({
                         <button
                             type="button"
                             onClick={() => setEnabled(!enabled)}
-                            className={`relative w-11 h-6 rounded-full transition-colors ${enabled
+                            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${enabled
                                 ? 'bg-brand-500'
                                 : 'bg-slate-300 dark:bg-slate-600'
                                 }`}
                         >
                             <div
-                                className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'
+                                className={`absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'
                                     }`}
                             />
                         </button>

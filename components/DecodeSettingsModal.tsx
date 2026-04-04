@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Lock, Unlock, Key, Zap, AlertTriangle, Info } from 'lucide-react';
+import { X, Lock, Unlock, Key, Zap, AlertTriangle, Info, Power } from 'lucide-react';
 import { DecodeConfig } from '../types';
 
 interface DecodeSettingsModalProps {
@@ -34,9 +34,7 @@ const DecodeSettingsModal: React.FC<DecodeSettingsModalProps> = ({
     const handleToggleEnabled = () => {
         setLocalConfig(prev => ({
             ...prev,
-            enabled: !prev.enabled,
-            // Reset other settings when disabled
-            ...(prev.enabled ? { password: '', autoDecodeEnabled: false } : {})
+            enabled: !prev.enabled
         }));
     };
 
@@ -47,12 +45,21 @@ const DecodeSettingsModal: React.FC<DecodeSettingsModalProps> = ({
         }));
     };
 
+    const handleToggleAlwaysOn = () => {
+        setLocalConfig(prev => ({
+            ...prev,
+            alwaysOn: !prev.alwaysOn
+        }));
+    };
+
     const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setLocalConfig(prev => ({
             ...prev,
             password: e.target.value
         }));
     };
+
+    const hasAnyDecodeModeEnabled = localConfig.enabled || localConfig.alwaysOn;
 
     return (
         <div
@@ -80,6 +87,33 @@ const DecodeSettingsModal: React.FC<DecodeSettingsModalProps> = ({
 
                 {/* Content */}
                 <div className="p-5 space-y-5">
+                    <div className="flex items-center justify-between p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-200 dark:border-emerald-800/50">
+                        <div className="flex items-center gap-3">
+                            <Power className={`w-5 h-5 ${localConfig.alwaysOn ? 'text-emerald-500' : 'text-slate-400'}`} />
+                            <div>
+                                <p className="font-medium text-slate-800 dark:text-white text-sm">
+                                    始终打开
+                                </p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                    开启后，所有应用结果都会先经过一遍小黄鸭智能解码检测，没有就跳过，有就自动解码。
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleToggleAlwaysOn}
+                            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${localConfig.alwaysOn
+                                ? 'bg-emerald-500'
+                                : 'bg-slate-300 dark:bg-slate-600'
+                                }`}
+                        >
+                            <div
+                                className={`absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${localConfig.alwaysOn ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                            />
+                        </button>
+                    </div>
+
                     {/* Enable Decode Toggle */}
                     <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
                         <div className="flex items-center gap-3">
@@ -100,20 +134,20 @@ const DecodeSettingsModal: React.FC<DecodeSettingsModalProps> = ({
                         <button
                             type="button"
                             onClick={handleToggleEnabled}
-                            className={`relative w-11 h-6 rounded-full transition-colors ${localConfig.enabled
+                            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${localConfig.enabled
                                 ? 'bg-amber-500'
                                 : 'bg-slate-300 dark:bg-slate-600'
                                 }`}
                         >
                             <div
-                                className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${localConfig.enabled ? 'translate-x-6' : 'translate-x-1'
+                                className={`absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${localConfig.enabled ? 'translate-x-6' : 'translate-x-1'
                                     }`}
                             />
                         </button>
                     </div>
 
                     {/* Password Input - Only show when enabled */}
-                    {localConfig.enabled && (
+                    {hasAnyDecodeModeEnabled && (
                         <div className="space-y-2">
                             <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
                                 <Key className="w-4 h-4 text-slate-400" />
@@ -146,21 +180,30 @@ const DecodeSettingsModal: React.FC<DecodeSettingsModalProps> = ({
                             <button
                                 type="button"
                                 onClick={handleToggleAutoDecodeEnabled}
-                                className={`relative w-11 h-6 rounded-full transition-colors ${localConfig.autoDecodeEnabled
+                                className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${localConfig.autoDecodeEnabled
                                     ? 'bg-emerald-500'
                                     : 'bg-slate-300 dark:bg-slate-600'
                                     }`}
                             >
                                 <div
-                                    className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${localConfig.autoDecodeEnabled ? 'translate-x-6' : 'translate-x-1'
+                                    className={`absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${localConfig.autoDecodeEnabled ? 'translate-x-6' : 'translate-x-1'
                                         }`}
                                 />
                             </button>
                         </div>
                     )}
 
+                    {localConfig.alwaysOn && (
+                        <div className="flex items-start gap-2 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800/50">
+                            <Info className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                            <p className="text-xs text-emerald-700 dark:text-emerald-300 leading-relaxed">
+                                “始终打开”开启时，会对所有应用结果强制执行一次智能检测；当前应用的“自动解码”设置只在关闭“始终打开”后生效。
+                            </p>
+                        </div>
+                    )}
+
                     {/* Batch Task Warning */}
-                    {localConfig.enabled && (
+                    {hasAnyDecodeModeEnabled && (
                         <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800/50">
                             <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                             <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
@@ -170,7 +213,7 @@ const DecodeSettingsModal: React.FC<DecodeSettingsModalProps> = ({
                     )}
 
                     {/* Supported Tool Info */}
-                    {localConfig.enabled && (
+                    {hasAnyDecodeModeEnabled && (
                         <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800/50">
                             <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
                             <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">

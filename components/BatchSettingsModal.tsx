@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { NodeInfo } from '../types';
+import { NodeInfo, PendingFilesMap } from '../types';
 import { parseListOptions } from '../utils/nodeUtils';
 import { X, Plus, Trash2, Save, Copy, AlertCircle, UploadCloud, Loader2, FileAudio, FileVideo, FileImage, FileText, FolderOpen, RefreshCw } from 'lucide-react';
 import { uploadFile } from '../services/api';
-
-// Map to store pending files: key = `${batchIndex}|${nodeId}|${fieldName}`, value = File
-export type PendingFilesMap = Record<string, File>;
 
 interface BatchSettingsModalProps {
     isOpen: boolean;

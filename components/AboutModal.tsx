@@ -24,10 +24,20 @@ const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
                 {/* Content */}
                 <div className="p-4 space-y-4">
 
-                    {/* Version Info */}
-                    <div className="text-center pb-4 border-b border-slate-100 dark:border-slate-800/50">
-                        <p className="font-semibold text-slate-800 dark:text-slate-200">RH 应用客户端</p>
-                    </div>
+                    {/* Project Showcase Link */}
+                    <a
+                        href="https://phantomai.top/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                    >
+                        <ExternalLink className="w-5 h-5 text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white" />
+                        <div className="flex-1">
+                            <div className="text-sm font-medium text-slate-700 dark:text-slate-300">幻影AI</div>
+                            <div className="text-xs text-slate-500">Phantom AI 项目展示中心</div>
+                        </div>
+                        <ExternalLink className="w-4 h-4 text-slate-400" />
+                    </a>
 
                     <div className="grid grid-cols-2 gap-3">
                         {/* Github */}

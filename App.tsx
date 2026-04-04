@@ -1,29 +1,91 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Home, Briefcase, Settings, User } from 'lucide-react';
+import { Home, Briefcase, Settings, User, Layers } from 'lucide-react';
 import HomeView from './components/HomeView';
 import StepConfig from './components/StepConfig';
 import StepEditor from './components/StepEditor';
 import StepRunning, { StepRunningRef } from './components/StepRunning';
 import WorkspacePanel from './components/WorkspacePanel';
+import MultiTaskView from './components/MultiTaskView';
 import SettingsModal from './components/SettingsModal';
 import ToolsView from './components/ToolsView';
 import DecodeSettingsModal from './components/DecodeSettingsModal';
 import Footer from './components/Footer';
 import TermsModal from './components/TermsModal';
 import AboutModal from './components/AboutModal';
-import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, DecodeConfig, HistoryItem, RecentApp, FailedTaskInfo, InstanceType } from './types';
-import { saveMultipleFiles, getDirectoryName, initAutoSave, checkDirectoryAccess } from './services/autoSaveService';
-import { PendingFilesMap } from './components/BatchSettingsModal';
+import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, DecodeConfig, HistoryItem, RecentApp, FailedTaskInfo, InstanceType, PendingFilesMap } from './types';
+import { saveMultipleFiles, getDirectoryName, initAutoSave, checkDirectoryAccess, getCurrentDirectoryPath } from './services/autoSaveService';
+import { DEFAULT_DECODE_CONFIG, normalizeDecodeConfig } from './utils/decodeConfig';
 
 const STORAGE_KEY_API_KEYS = 'rh_api_keys_v2';
 const STORAGE_KEY_AUTOSAVE = 'rh_autosave_config';
 const STORAGE_KEY_FAVORITES = 'rh_favorites';
 const STORAGE_KEY_DECODE = 'rh_decode_config';
 const STORAGE_KEY_RECENT = 'rh_recent_apps';
+const STORAGE_KEY_STARTUP_VIEW = 'rh_startup_view';
+const CONCURRENCY_OPTIONS = [1, 3, 5, 20] as const;
+
+type AppView = 'home' | 'workspace' | 'multitask' | 'tools';
+type StartupView = Exclude<AppView, 'tools'>;
+
+const normalizeAutoSaveConfig = (config?: Partial<AutoSaveConfig> | null): AutoSaveConfig => ({
+  enabled: !!config?.enabled && !!(config?.directoryName || config?.directoryPath),
+  directoryName: config?.directoryName || null,
+  directoryPath: config?.directoryPath || null,
+});
+
+const createEmptyApiKeyEntry = (): ApiKeyEntry => ({
+  id: crypto.randomUUID(),
+  apiKey: '',
+  concurrency: 1,
+});
+
+const normalizeApiKeyEntry = (entry?: Partial<ApiKeyEntry> | null): ApiKeyEntry => {
+  const normalizedConcurrency = Number(entry?.concurrency);
+
+  return {
+    id: entry?.id || crypto.randomUUID(),
+    apiKey: typeof entry?.apiKey === 'string' ? entry.apiKey : '',
+    concurrency: CONCURRENCY_OPTIONS.includes(normalizedConcurrency as typeof CONCURRENCY_OPTIONS[number])
+      ? normalizedConcurrency
+      : 1,
+    accountInfo: entry?.accountInfo ?? null,
+    loading: entry?.loading,
+    error: entry?.error,
+  };
+};
+
+const normalizeApiKeys = (entries?: Partial<ApiKeyEntry>[] | null): ApiKeyEntry[] => {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [createEmptyApiKeyEntry()];
+  }
+
+  return [normalizeApiKeyEntry(entries[0])];
+};
+
+const normalizeStartupView = (value?: string | null): StartupView => {
+  if (value === 'workspace' || value === 'multitask') {
+    return value;
+  }
+
+  return 'home';
+};
 
 function App() {
   // Global View State
-  const [currentView, setCurrentView] = useState<'home' | 'workspace' | 'tools'>('home');
+  const [startupView, setStartupView] = useState<StartupView>(() => {
+    try {
+      return normalizeStartupView(localStorage.getItem(STORAGE_KEY_STARTUP_VIEW));
+    } catch {
+      return 'home';
+    }
+  });
+  const [currentView, setCurrentView] = useState<AppView>(() => {
+    try {
+      return normalizeStartupView(localStorage.getItem(STORAGE_KEY_STARTUP_VIEW));
+    } catch {
+      return 'home';
+    }
+  });
 
   // State
   const [webappId, setWebappId] = useState('');
@@ -46,9 +108,29 @@ function App() {
   const [activeDecodeConfig, setActiveDecodeConfig] = useState<DecodeConfig>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DECODE);
-      return saved ? JSON.parse(saved) : { enabled: false, password: '', autoDecodeEnabled: false };
-    } catch { return { enabled: false, password: '', autoDecodeEnabled: false }; }
+      return saved ? normalizeDecodeConfig(JSON.parse(saved)) : DEFAULT_DECODE_CONFIG;
+    } catch { return DEFAULT_DECODE_CONFIG; }
   });
+
+  useEffect(() => {
+    const normalizedKeys = normalizeApiKeys(apiKeys);
+    const currentKey = apiKeys[0];
+    const normalizedKey = normalizedKeys[0];
+    const needsNormalization = apiKeys.length !== 1
+      || currentKey?.apiKey !== normalizedKey.apiKey
+      || (currentKey?.concurrency || 1) !== normalizedKey.concurrency
+      || currentKey?.id !== normalizedKey.id;
+
+    if (!needsNormalization) {
+      return;
+    }
+
+    setApiKeys(normalizedKeys);
+
+    if (localStorage.getItem(STORAGE_KEY_API_KEYS)) {
+      localStorage.setItem(STORAGE_KEY_API_KEYS, JSON.stringify(normalizedKeys));
+    }
+  }, []);
 
   const [runType, setRunType] = useState<'none' | 'single' | 'batch' | 'result'>('none');
   const [instanceType, setInstanceType] = useState<InstanceType>('default');
@@ -73,16 +155,12 @@ function App() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_AUTOSAVE);
       if (saved) {
-        const config = JSON.parse(saved);
+        return normalizeAutoSaveConfig(JSON.parse(saved));
         // 只有当目录名存在时才启用自动保存
-        return {
-          enabled: config.enabled && !!config.directoryName,
-          directoryName: config.directoryName || null
-        };
       }
-      return { enabled: false, directoryName: null };
+      return normalizeAutoSaveConfig();
     } catch { 
-      return { enabled: false, directoryName: null }; 
+      return normalizeAutoSaveConfig(); 
     }
   });
 
@@ -102,6 +180,11 @@ function App() {
   const [termsMode, setTermsMode] = useState<'first-time' | 'about'>('first-time');
 
   const stepRunningRef = useRef<StepRunningRef>(null);
+  const persistAutoSaveConfig = (config: AutoSaveConfig) => {
+    const normalized = normalizeAutoSaveConfig(config);
+    setAutoSaveConfig(normalized);
+    localStorage.setItem(STORAGE_KEY_AUTOSAVE, JSON.stringify(normalized));
+  };
 
   useEffect(() => {
     // Force Dark Mode by default
@@ -115,24 +198,23 @@ function App() {
 
     // Initialize auto-save on mount
     const init = async () => {
-      const dirName = await initAutoSave();
+      const dirName = await initAutoSave(autoSaveConfig.directoryPath);
       if (dirName) {
         // 成功恢复目录访问权限
-        setAutoSaveConfig(prev => ({
-          ...prev,
-          enabled: true,
-          directoryName: dirName
-        }));
+        const restoredPath = getCurrentDirectoryPath();
+        persistAutoSaveConfig({
+          enabled: autoSaveConfig.directoryName || autoSaveConfig.directoryPath ? autoSaveConfig.enabled : true,
+          directoryName: dirName,
+          directoryPath: restoredPath
+        });
       } else {
         // 无法恢复权限，禁用自动保存并清除无效配置
-        setAutoSaveConfig(prev => ({
-          ...prev,
-          enabled: false,
-          directoryName: null
-        }));
+        persistAutoSaveConfig({
+          ...autoSaveConfig,
+          enabled: false
+        });
         // 清除 localStorage 中的无效配置
-        localStorage.removeItem(STORAGE_KEY_AUTOSAVE);
-        console.log('[AutoSave] Cleared invalid auto-save configuration from localStorage');
+        console.log('[AutoSave] Unable to restore directory access for this launch');
       }
     };
     init();
@@ -236,9 +318,10 @@ function App() {
   };
 
   const handleUpdateApiKeys = (newKeys: ApiKeyEntry[], saveToStorage: boolean = true) => {
-    setApiKeys(newKeys);
+    const normalizedKeys = normalizeApiKeys(newKeys);
+    setApiKeys(normalizedKeys);
     if (saveToStorage) {
-      localStorage.setItem(STORAGE_KEY_API_KEYS, JSON.stringify(newKeys));
+      localStorage.setItem(STORAGE_KEY_API_KEYS, JSON.stringify(normalizedKeys));
     } else {
       // 如果不保存，则清除 localStorage 中已保存的 API Keys
       localStorage.removeItem(STORAGE_KEY_API_KEYS);
@@ -246,8 +329,13 @@ function App() {
   };
 
   const handleUpdateAutoSave = (config: AutoSaveConfig) => {
-    setAutoSaveConfig(config);
-    localStorage.setItem(STORAGE_KEY_AUTOSAVE, JSON.stringify(config));
+    persistAutoSaveConfig(config);
+  };
+
+  const handleUpdateStartupView = (view: StartupView) => {
+    setStartupView(view);
+    setCurrentView(view);
+    localStorage.setItem(STORAGE_KEY_STARTUP_VIEW, view);
   };
 
   const handleToggleFavorite = (app: Favorite) => {
@@ -304,9 +392,10 @@ function App() {
     setShowTermsModal(true);
   };
 
-  const tabs: { id: 'home' | 'workspace' | 'tools'; label: string; icon: React.FC<any> }[] = [
+  const tabs: { id: AppView; label: string; icon: React.FC<any> }[] = [
     { id: 'home', label: '首页', icon: Home },
-    { id: 'workspace', label: '工作区', icon: Briefcase },
+    { id: 'workspace', label: '单任务模式', icon: Briefcase },
+    { id: 'multitask', label: '多任务模式', icon: Layers },
     { id: 'tools', label: '工具箱', icon: Settings },
   ];
 
@@ -320,7 +409,7 @@ function App() {
       <header className="bg-white dark:bg-[#0F1115] border-b border-slate-200 dark:border-slate-800/50 h-14 flex items-center justify-between pr-4 shrink-0 z-20 shadow-sm">
         <div className="flex items-center h-full gap-3">
           <img src="/r.png" alt="RunningHub" className="h-10 w-auto ml-2" />
-          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端(非官方) v1.5.6 <span className="text-xs opacity-70">beta 0128v1</span></span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.5.9</span>
           <button
             onClick={handleOpenAbout}
             className="ml-2 px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"
@@ -386,8 +475,22 @@ function App() {
           <ToolsView
             onOpenDecodeSettings={() => setIsDecodeSettingsOpen(true)}
             decodeConfig={activeDecodeConfig}
+            autoSaveConfig={autoSaveConfig}
+            onUpdateAutoSave={handleUpdateAutoSave}
+            startupView={startupView}
+            onUpdateStartupView={handleUpdateStartupView}
           />
         )}
+
+        <div className={`flex-1 overflow-hidden ${currentView === 'multitask' ? 'flex' : 'hidden'}`}>
+          <MultiTaskView 
+            apiKeys={apiKeys}
+            decodeConfig={activeDecodeConfig}
+            autoSaveConfig={autoSaveConfig}
+            recentApps={recentApps}
+            favorites={favorites}
+          />
+        </div>
 
         {/* Workspace View */}
         <div className={`flex-1 flex overflow-hidden ${currentView === 'workspace' ? 'flex' : 'hidden'}`}>
@@ -492,8 +595,9 @@ function App() {
         onClose={() => setIsDecodeSettingsOpen(false)}
         config={activeDecodeConfig}
         onSave={(config) => {
-          setActiveDecodeConfig(config);
-          localStorage.setItem(STORAGE_KEY_DECODE, JSON.stringify(config));
+          const normalizedConfig = normalizeDecodeConfig(config);
+          setActiveDecodeConfig(normalizedConfig);
+          localStorage.setItem(STORAGE_KEY_DECODE, JSON.stringify(normalizedConfig));
         }}
       />
 

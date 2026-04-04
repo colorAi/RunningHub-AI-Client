@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { UP_RECOMMENDATIONS } from './recommendationsData';
-import FeishuDocEmbed from './FeishuDocEmbed';
 import { Globe, RefreshCw, Heart, MousePointerClick, Star, Play, AlertCircle, Loader2, User, Search, X } from 'lucide-react';
 import { NodeInfo, WebAppInfo, Favorite } from '../types';
 import { getNodeList, getOfficialAppList, getAppDetailById, AppListItem } from '../services/api';
@@ -21,7 +20,7 @@ interface AppCache {
 }
 
 const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, onToggleFavorite }) => {
-    const [activeTab, setActiveTab] = useState<'campaign' | 'excellent' | 'official'>('campaign');
+    const [activeTab, setActiveTab] = useState<'official' | 'excellent'>('official');
 
     // Cache for loaded app details
     const [appCache, setAppCache] = useState<AppCache>(() => {
@@ -234,13 +233,13 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
             <div className="flex items-center justify-between mb-6 border-b border-slate-200 dark:border-slate-800 pb-2 shrink-0">
                 <div className="flex gap-6">
                     <button
-                        onClick={() => setActiveTab('campaign')}
-                        className={`pb-2 text-sm font-semibold transition-colors border-b-2 -mb-2.5 px-1 ${activeTab === 'campaign'
+                        onClick={() => setActiveTab('official')}
+                        className={`pb-2 text-sm font-semibold transition-colors border-b-2 -mb-2.5 px-1 ${activeTab === 'official'
                             ? 'text-brand-600 dark:text-brand-400 border-brand-600 dark:border-brand-400'
                             : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-300'
                             }`}
                     >
-                        骏马新程 创作新生·2026
+                        官方应用商城
                     </button>
                     <button
                         onClick={() => setActiveTab('excellent')}
@@ -250,15 +249,6 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
                             }`}
                     >
                         优秀UP应用推荐
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('official')}
-                        className={`pb-2 text-sm font-semibold transition-colors border-b-2 -mb-2.5 px-1 ${activeTab === 'official'
-                            ? 'text-brand-600 dark:text-brand-400 border-brand-600 dark:border-brand-400'
-                            : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-300'
-                            }`}
-                    >
-                        官方应用商城
                     </button>
                 </div>
 
@@ -324,118 +314,7 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
             </div>
 
             <div className="flex-1 min-h-0">
-                {activeTab === 'campaign' ? (
-                    <FeishuDocEmbed docUrl="https://tcn73taga4ku.feishu.cn/wiki/XckBwAIJyiHwo3kypwxcZr8anhb" />
-                ) : activeTab === 'excellent' ? (
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 pb-10">
-                        {allApps.map((app) => {
-                            const cached = appCache[app.id];
-                            const info = cached?.appInfo;
-                            const hasError = !!cached?.error;
-
-                            return (
-                                <div
-                                    key={app.id}
-                                    className="group relative flex flex-col bg-white dark:bg-[#1a1d24] rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-brand-300 dark:hover:border-brand-700 transition-all duration-300 overflow-hidden"
-                                >
-                                    {/* Card Image Area - 3:4 Aspect Ratio */}
-                                    <div className="relative aspect-[3/4] bg-slate-100 dark:bg-[#252830] overflow-hidden">
-                                        {info?.covers?.[0]?.thumbnailUri ? (
-                                            <img
-                                                src={info.covers[0].thumbnailUri}
-                                                alt={app.name}
-                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                            />
-                                        ) : (
-                                            <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 gap-2">
-                                                <Globe className="w-8 h-8 opacity-20" />
-                                                {hasError && <span className="text-[10px] text-red-400">加载失败</span>}
-                                            </div>
-                                        )}
-
-                                        {/* UP Badge (Top Left) */}
-                                        <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 backdrop-blur-sm rounded-md flex items-center gap-1 z-10">
-                                            <User className="w-2.5 h-2.5 text-brand-400" />
-                                            <span className="text-[10px] font-medium text-white/90">{app.upName}</span>
-                                        </div>
-
-                                        {/* Favorite Button (Top Right) */}
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                onToggleFavorite({
-                                                    webappId: app.id,
-                                                    name: app.name,
-                                                    upName: app.upName,
-                                                    appInfo: info || undefined,
-                                                    nodes: cached?.nodes || undefined
-                                                });
-                                            }}
-                                            className="absolute top-2 right-2 p-1.5 rounded-full bg-black/30 backdrop-blur-sm hover:bg-black/50 transition-colors z-10 group/fav"
-                                        >
-                                            <Star
-                                                className={`w-4 h-4 transition-colors ${favorites.some(f => f.webappId === app.id)
-                                                    ? 'fill-amber-400 text-amber-400'
-                                                    : 'text-white group-hover/fav:text-amber-400'
-                                                    }`}
-                                            />
-                                        </button>
-
-                                        {/* Overlay Gradient */}
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
-
-                                        {/* Instant Use Button (Hover - Centered for better access in 3:4) */}
-                                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                                            <button
-                                                onClick={() => handleInstantUse(app.id)}
-                                                className="flex items-center gap-1 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transform scale-90 group-hover:scale-100 transition-transform"
-                                            >
-                                                <Play className="w-3.5 h-3.5 fill-current" />
-                                                立即使用
-                                            </button>
-                                        </div>
-
-                                        {/* Info Overlay (Bottom) */}
-                                        <div className="absolute bottom-0 left-0 right-0 p-3 pt-8 bg-gradient-to-t from-black/90 to-transparent flex flex-col gap-1">
-                                            <h4
-                                                className="font-bold text-white text-xs line-clamp-2 leading-relaxed"
-                                                title={app.name}
-                                            >
-                                                {app.name}
-                                            </h4>
-
-                                            <div className="flex items-center justify-between text-[10px] text-slate-300">
-                                                {info ? (
-                                                    <>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="flex items-center gap-0.5" title="使用次数">
-                                                                <MousePointerClick className="w-3 h-3 text-brand-400" />
-                                                                {info.statisticsInfo?.useCount || 0}
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="flex items-center gap-0.5" title="喜欢">
-                                                                <Heart className="w-3 h-3 text-red-400" />
-                                                                {info.statisticsInfo?.likeCount || 0}
-                                                            </span>
-                                                        </div>
-                                                    </>
-                                                ) : (
-                                                    <span className="text-white/50 italic text-[9px]">
-                                                        {hasError ? "不可用" : "需同步"}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                        {allApps.length === 0 && (
-                            <div className="col-span-full text-sm text-slate-400 italic">暂无推荐</div>
-                        )}
-                    </div>
-                ) : (
+                {activeTab === 'official' ? (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 pb-10">
                         {isLoadingOfficial ? (
                             <div className="col-span-full flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
@@ -585,6 +464,115 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, apiKeys, favorites, on
                                     </div>
                                 )}
                             </>
+                        )}
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 pb-10">
+                        {allApps.map((app) => {
+                            const cached = appCache[app.id];
+                            const info = cached?.appInfo;
+                            const hasError = !!cached?.error;
+
+                            return (
+                                <div
+                                    key={app.id}
+                                    className="group relative flex flex-col bg-white dark:bg-[#1a1d24] rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-brand-300 dark:hover:border-brand-700 transition-all duration-300 overflow-hidden"
+                                >
+                                    {/* Card Image Area - 3:4 Aspect Ratio */}
+                                    <div className="relative aspect-[3/4] bg-slate-100 dark:bg-[#252830] overflow-hidden">
+                                        {info?.covers?.[0]?.thumbnailUri ? (
+                                            <img
+                                                src={info.covers[0].thumbnailUri}
+                                                alt={app.name}
+                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 gap-2">
+                                                <Globe className="w-8 h-8 opacity-20" />
+                                                {hasError && <span className="text-[10px] text-red-400">加载失败</span>}
+                                            </div>
+                                        )}
+
+                                        {/* UP Badge (Top Left) */}
+                                        <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 backdrop-blur-sm rounded-md flex items-center gap-1 z-10">
+                                            <User className="w-2.5 h-2.5 text-brand-400" />
+                                            <span className="text-[10px] font-medium text-white/90">{app.upName}</span>
+                                        </div>
+
+                                        {/* Favorite Button (Top Right) */}
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onToggleFavorite({
+                                                    webappId: app.id,
+                                                    name: app.name,
+                                                    upName: app.upName,
+                                                    appInfo: info || undefined,
+                                                    nodes: cached?.nodes || undefined
+                                                });
+                                            }}
+                                            className="absolute top-2 right-2 p-1.5 rounded-full bg-black/30 backdrop-blur-sm hover:bg-black/50 transition-colors z-10 group/fav"
+                                        >
+                                            <Star
+                                                className={`w-4 h-4 transition-colors ${favorites.some(f => f.webappId === app.id)
+                                                    ? 'fill-amber-400 text-amber-400'
+                                                    : 'text-white group-hover/fav:text-amber-400'
+                                                    }`}
+                                            />
+                                        </button>
+
+                                        {/* Overlay Gradient */}
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
+
+                                        {/* Instant Use Button (Hover - Centered for better access in 3:4) */}
+                                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                            <button
+                                                onClick={() => handleInstantUse(app.id)}
+                                                className="flex items-center gap-1 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transform scale-90 group-hover:scale-100 transition-transform"
+                                            >
+                                                <Play className="w-3.5 h-3.5 fill-current" />
+                                                立即使用
+                                            </button>
+                                        </div>
+
+                                        {/* Info Overlay (Bottom) */}
+                                        <div className="absolute bottom-0 left-0 right-0 p-3 pt-8 bg-gradient-to-t from-black/90 to-transparent flex flex-col gap-1">
+                                            <h4
+                                                className="font-bold text-white text-xs line-clamp-2 leading-relaxed"
+                                                title={app.name}
+                                            >
+                                                {app.name}
+                                            </h4>
+
+                                            <div className="flex items-center justify-between text-[10px] text-slate-300">
+                                                {info ? (
+                                                    <>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="flex items-center gap-0.5" title="使用次数">
+                                                                <MousePointerClick className="w-3 h-3 text-brand-400" />
+                                                                {info.statisticsInfo?.useCount || 0}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="flex items-center gap-0.5" title="喜欢">
+                                                                <Heart className="w-3 h-3 text-red-400" />
+                                                                {info.statisticsInfo?.likeCount || 0}
+                                                            </span>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <span className="text-white/50 italic text-[9px]">
+                                                        {hasError ? "不可用" : "需同步"}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {allApps.length === 0 && (
+                            <div className="col-span-full text-sm text-slate-400 italic">暂无推荐</div>
                         )}
                     </div>
                 )}
