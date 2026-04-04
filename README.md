@@ -10,6 +10,11 @@
 
 ## 📅 Changelog
 
+### v1.5.9 beta 0404
+- **🔧 Auto-save Fix**: Fixed auto-save functionality issues for improved reliability.
+- **⚡ Multi-task Parallel Mode**: Added multi-task parallel execution mode (requires testing).
+- **🗑️ Removed RH Contest Tab**: Removed the RH contest event tab.
+
 ### v1.5.6 beta 0127v2
 - **🎨 UI Refactor**: Brand new interface design, providing a more modern visual experience.
 - **🏪 Official App Store**: Added official app store, supporting **app search** to easily find tools.
@@ -109,6 +114,11 @@ RunningHub AI Client is a modern desktop application built with React and Vite, 
 - **注册福利**: [国内点击注册送1000RH币](https://www.runninghub.cn/?inviteCode=rh-v1123) ,[海外点击注册送1000RH币](https://www.runninghub.ai/?inviteCode=rh-v1123)
 
 ## 📅 更新日志 (Changelog)
+
+### v1.5.9 beta 0404
+- **🔧 修复自动保存**: 修复自动保存功能相关问题，提升稳定性。
+- **⚡ 多任务并行模式**: 新增多任务并行执行模式（需测试）。
+- **🗑️ 移除RH大赛活动标签**: 移除RH大赛活动入口标签。
 
 ### v1.5.6 beta 0127v2
 - **🎨 UI 重构**: 界面全新改版，提供更现代化的视觉体验。
