@@ -17,6 +17,42 @@ export interface DecodeResult {
     errorMessage?: string;
 }
 
+const DUCK_CARRIER_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp']);
+
+function extractExtensionFromUrl(value: string): string {
+    try {
+        const url = new URL(value, window.location.href);
+        const pathname = url.pathname || value;
+        const lastDot = pathname.lastIndexOf('.');
+        if (lastDot === -1) return '';
+        return pathname.slice(lastDot + 1).toLowerCase();
+    } catch {
+        const cleaned = value.split('?')[0].split('#')[0];
+        const lastDot = cleaned.lastIndexOf('.');
+        if (lastDot === -1) return '';
+        return cleaned.slice(lastDot + 1).toLowerCase();
+    }
+}
+
+export function isLikelyDuckCarrierImage(sourceUrl: string, fileType?: string): boolean {
+    const urlExt = extractExtensionFromUrl(sourceUrl);
+    const normalizedFileType = (fileType || '').toLowerCase().replace(/^\.+/, '');
+
+    if (DUCK_CARRIER_IMAGE_EXTENSIONS.has(urlExt)) {
+        return true;
+    }
+
+    if (DUCK_CARRIER_IMAGE_EXTENSIONS.has(normalizedFileType)) {
+        return true;
+    }
+
+    if (!urlExt && !normalizedFileType) {
+        return true;
+    }
+
+    return false;
+}
+
 /**
  * Generate key stream for XOR decryption (matching Python implementation)
  */
@@ -320,15 +356,15 @@ export async function decodeDuckImage(
         }
 
         let finalData = parsed.data;
-        let finalExt = parsed.ext;
+        let finalExt = parsed.ext.trim().replace(/^\.+/, '');
 
         // Handle .binpng format (video data stored as image pixels)
-        if (finalExt.endsWith('.binpng')) {
+        if (finalExt.toLowerCase().endsWith('.binpng')) {
             // The data is a PNG image containing binary video data
             const pngBlob = new Blob([finalData.buffer.slice(finalData.byteOffset, finalData.byteOffset + finalData.byteLength) as ArrayBuffer], { type: 'image/png' });
             const binpngImageData = await loadImageDataFromBlob(pngBlob);
             finalData = binpngToBytes(binpngImageData);
-            finalExt = finalExt.replace('.binpng', '');
+            finalExt = finalExt.replace(/\.binpng$/i, '');
         }
 
         // Determine MIME type
@@ -338,9 +374,15 @@ export async function decodeDuckImage(
         else if (extLower === 'jpg' || extLower === 'jpeg') mimeType = 'image/jpeg';
         else if (extLower === 'webp') mimeType = 'image/webp';
         else if (extLower === 'gif') mimeType = 'image/gif';
+        else if (extLower === 'bmp') mimeType = 'image/bmp';
+        else if (extLower === 'svg') mimeType = 'image/svg+xml';
         else if (extLower === 'mp4') mimeType = 'video/mp4';
         else if (extLower === 'webm') mimeType = 'video/webm';
         else if (extLower === 'mov') mimeType = 'video/quicktime';
+        else if (extLower === 'mp3') mimeType = 'audio/mpeg';
+        else if (extLower === 'wav') mimeType = 'audio/wav';
+        else if (extLower === 'ogg') mimeType = 'audio/ogg';
+        else if (extLower === 'txt') mimeType = 'text/plain;charset=utf-8';
 
         const blob = new Blob([finalData.buffer.slice(finalData.byteOffset, finalData.byteOffset + finalData.byteLength) as ArrayBuffer], { type: mimeType });
 

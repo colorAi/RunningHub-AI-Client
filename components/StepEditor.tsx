@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { NodeInfo, WebAppInfo, DecodeConfig, InstanceType } from '../types';
+import React, { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
+import { NodeInfo, WebAppInfo, DecodeConfig, InstanceType, PendingFilesMap } from '../types';
 import { parseListOptions } from '../utils/nodeUtils';
 import { Upload, Type, List, FileImage, Play, Mic, PlayCircle, AlertCircle, Loader2, Sliders, X, UploadCloud, FileAudio, FileVideo, ChevronDown, Image as ImageIcon, Layers, Settings, Info, Lock, Zap } from 'lucide-react';
 import { uploadFile, buildFileUrl } from '../services/api';
-import BatchSettingsModal, { PendingFilesMap } from './BatchSettingsModal';
+import BatchSettingsModal from './BatchSettingsModal';
 import AppInfoModal from './AppInfoModal';
 
 
@@ -21,9 +21,28 @@ interface StepEditorProps {
     onRetryTask?: (taskNodes: NodeInfo[], originalIndex: number, pendingFiles: PendingFilesMap) => void;  // 单个任务重试回调，传递当前编辑的节点数据
     instanceType?: InstanceType;  // 新增
     onInstanceTypeChange?: (type: InstanceType) => void;  // 新增
+    initialBatchList?: NodeInfo[][];
+    initialBatchTaskName?: string;
 }
 
-const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, decodeConfig, failedBatchIndices = new Set(), onRetryTask, instanceType = 'default', onInstanceTypeChange }) => {
+export interface StepEditorSnapshot {
+    nodes: NodeInfo[];
+    batchList: NodeInfo[][];
+    pendingFiles: PendingFilesMap;
+    batchTaskName: string;
+    instanceType: InstanceType;
+    hasUploadingFiles: boolean;
+    isConnected: boolean;
+}
+
+export interface StepEditorRef {
+    getSnapshot: () => StepEditorSnapshot;
+}
+
+const cloneNodeRows = (rows?: NodeInfo[][]) => (rows || []).map(row => row.map(node => ({ ...node })));
+
+const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, decodeConfig, failedBatchIndices = new Set(), onRetryTask, instanceType = 'default', onInstanceTypeChange, initialBatchList = [], initialBatchTaskName = '' }, ref) => {
+    const editorDomId = useId().replace(/:/g, '-');
     const [localNodes, setLocalNodes] = useState<NodeInfo[]>(nodes);
     const [uploadingState, setUploadingState] = useState<Record<string, boolean>>({});
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -32,9 +51,9 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
 
     // Batch settings state
     const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
-    const [batchList, setBatchList] = useState<NodeInfo[][]>([]);
+    const [batchList, setBatchList] = useState<NodeInfo[][]>(() => cloneNodeRows(initialBatchList));
     const [pendingFiles, setPendingFiles] = useState<PendingFilesMap>({});
-    const [batchTaskName, setBatchTaskName] = useState<string>('');
+    const [batchTaskName, setBatchTaskName] = useState<string>(initialBatchTaskName);
 
     // App info modal state
     const [isAppInfoModalOpen, setIsAppInfoModalOpen] = useState(false);
@@ -61,10 +80,10 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
         // Reset broken images on new node load
         setBrokenImages({});
         // Reset batch list and pending files when nodes configuration changes
-        setBatchList([]);
+        setBatchList(cloneNodeRows(initialBatchList));
         setPendingFiles({});
-        setBatchTaskName('');
-    }, [nodes]);
+        setBatchTaskName(initialBatchTaskName);
+    }, [initialBatchList, initialBatchTaskName, nodes]);
 
     // Cleanup object URLs to avoid memory leaks
     useEffect(() => {
@@ -72,6 +91,18 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
             Object.values(previewsRef.current).forEach(url => URL.revokeObjectURL(url as string));
         };
     }, []);
+
+    useImperativeHandle(ref, () => ({
+        getSnapshot: () => ({
+            nodes: localNodes.map(node => ({ ...node })),
+            batchList: batchList.map(row => row.map(node => ({ ...node }))),
+            pendingFiles: { ...pendingFiles },
+            batchTaskName,
+            instanceType,
+            hasUploadingFiles: Object.values(uploadingState).some(Boolean),
+            isConnected,
+        })
+    }), [batchList, batchTaskName, instanceType, isConnected, localNodes, pendingFiles, uploadingState]);
 
     const handleTextChange = (index: number, val: string) => {
         const newNodes = [...localNodes];
@@ -176,6 +207,7 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
 
     const renderNodeInput = (node: NodeInfo, index: number) => {
         const key = node.nodeId + '_' + index;
+        const fileInputId = `file-${editorDomId}-${key}`;
         const isUploading = uploadingState[key];
         const hasError = errors[key];
         const isDragging = dragActive[key];
@@ -216,7 +248,7 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
                         >
                             <input
                                 type="file"
-                                id={`file-${key}`}
+                                id={fileInputId}
                                 className="hidden"
                                 accept="image/*"
                                 disabled={isUploading}
@@ -226,7 +258,7 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
                             />
 
                             <label
-                                htmlFor={`file-${key}`}
+                                htmlFor={fileInputId}
                                 className="flex flex-col items-center justify-center cursor-pointer w-full min-h-[220px]"
                             >
                                 {isUploading ? (
@@ -343,7 +375,7 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
                         >
                             <input
                                 type="file"
-                                id={`file-${key}`}
+                                id={fileInputId}
                                 className="hidden"
                                 accept={`${node.fieldType.toLowerCase()}/*`}
                                 disabled={isUploading}
@@ -353,7 +385,7 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
                             />
 
                             <label
-                                htmlFor={`file-${key}`}
+                                htmlFor={fileInputId}
                                 className="flex flex-col items-center justify-center p-6 cursor-pointer w-full h-full min-h-[160px]"
                             >
                                 {isUploading ? (
@@ -671,7 +703,7 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
                     </button>
                 ) : (
                     <button
-                        onClick={() => onRun(localNodes, undefined, undefined, decodeConfig)}
+                        onClick={() => onRun(localNodes, undefined, undefined, decodeConfig, undefined, instanceType)}
                         disabled={!isConnected || Object.values(uploadingState).some(Boolean) || runType === 'batch'}
                         className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-brand-200 dark:shadow-brand-900/20 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none disabled:shadow-none text-sm"
                     >
@@ -713,6 +745,6 @@ const StepEditor: React.FC<StepEditorProps> = ({ nodes, apiKeys, isConnected, ru
             </div>
         </div>
     );
-};
+});
 
 export default StepEditor;

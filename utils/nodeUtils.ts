@@ -27,7 +27,7 @@ export const parseListOptions = (node: NodeInfo): ListOption[] => {
             parsed = node.fieldData;
         } else {
             try {
-                parsed = JSON.parse(node.fieldData);
+                parsed = JSON.parse(String(node.fieldData));
             } catch (e) {
                 // Handle comma-separated string
                 if (typeof node.fieldData === 'string' && node.fieldData.includes(',')) {

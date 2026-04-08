@@ -1,11 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { NodeInfo } from '../types';
+import React, { useState, useEffect, useId } from 'react';
+import { NodeInfo, PendingFilesMap } from '../types';
 import { parseListOptions } from '../utils/nodeUtils';
 import { X, Plus, Trash2, Save, Copy, AlertCircle, UploadCloud, Loader2, FileAudio, FileVideo, FileImage, FileText, FolderOpen, RefreshCw } from 'lucide-react';
 import { uploadFile } from '../services/api';
-
-// Map to store pending files: key = `${batchIndex}|${nodeId}|${fieldName}`, value = File
-export type PendingFilesMap = Record<string, File>;
 
 interface BatchSettingsModalProps {
     isOpen: boolean;
@@ -30,6 +27,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     failedIndices = new Set(),
     onRetryTask
 }) => {
+    const modalDomId = useId().replace(/:/g, '-');
     const [batchList, setBatchList] = useState<NodeInfo[][]>(initialBatchList);
     const [taskName, setTaskName] = useState(initialTaskName);
     const [uploadingState, setUploadingState] = useState<Record<string, boolean>>({});
@@ -684,6 +682,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
         // Use taskId if available, fallback to batchIndex for backward compatibility
         const taskId = node._taskId || `task-${batchIndex}`;
         const key = `${taskId}|${node.nodeId}|${node.fieldName || ''}`; // SAFE FIELD NAME
+        const fileInputId = `file-${modalDomId}-${key}`;
         const isUploading = uploadingState[key];
 
         // 1. Media Types (Image, Audio, Video) - Mini Drop Zone
@@ -696,7 +695,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 <div className="relative w-[160px] h-[60px] group">
                     <input
                         type="file"
-                        id={`file-${key}`}
+                        id={fileInputId}
                         className="hidden"
                         accept={`${node.fieldType.toLowerCase()}/*`}
                         disabled={isUploading}
@@ -705,7 +704,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                         }}
                     />
                     <label
-                        htmlFor={`file-${key}`}
+                        htmlFor={fileInputId}
                         className={`
                             flex items-center justify-center w-full h-full rounded-lg border-2 border-dashed cursor-pointer transition-all overflow-hidden px-2 gap-2
                             ${isUploading

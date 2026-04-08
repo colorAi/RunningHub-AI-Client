@@ -10,7 +10,7 @@ interface TermsModalProps {
 
 const termsContent = `【免责声明与使用须知】
 
-欢迎使用 [RH客户端(非官方)]（以下简称“本工具”）。在使用本工具前，请您务必仔细阅读并理解本声明。一旦您开始使用本工具，即表示您已接受并同意遵守以下所有条款：
+欢迎使用 [RH客户端( H 版 )]（以下简称“本工具”）。在使用本工具前，请您务必仔细阅读并理解本声明。一旦您开始使用本工具，即表示您已接受并同意遵守以下所有条款：
 
 1. 免费与性质
 
@@ -108,8 +108,8 @@ const TermsModal: React.FC<TermsModalProps> = ({
                         <div className="space-y-4">
                             <label className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/50 cursor-pointer transition-colors border border-transparent hover:border-slate-200 dark:hover:border-slate-700 group">
                                 <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${isChecked
-                                        ? 'bg-brand-500 border-brand-500'
-                                        : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 group-hover:border-brand-400'
+                                    ? 'bg-brand-500 border-brand-500'
+                                    : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 group-hover:border-brand-400'
                                     }`}>
                                     {isChecked && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
                                 </div>
@@ -129,8 +129,8 @@ const TermsModal: React.FC<TermsModalProps> = ({
                                 onClick={handleConfirm}
                                 disabled={!isChecked}
                                 className={`w-full py-3.5 rounded-xl font-bold text-sm tracking-wide transition-all duration-200 flex items-center justify-center gap-2 ${isChecked
-                                        ? 'bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/25 translate-y-0'
-                                        : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                                    ? 'bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/25 translate-y-0'
+                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
                                     }`}
                             >
                                 <CheckCircle2 className="w-5 h-5" />

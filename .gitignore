@@ -7,13 +7,26 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build output
 dist
 dist-ssr
+tsconfig.tsbuildinfo
+
+# Tauri (native build)
 src-tauri
+
+# Build scripts
 build_unix.sh
 build_windows.bat
+启动.bat
+
+# Environment variables
 *.local
+.env
+.env.*
 
 # Editor directories and files
 .vscode/*
@@ -37,7 +50,6 @@ response.json
 *.ps1
 api_test_search*.txt
 
-
 # Docs (keep only root README.md)
 *.md
 !/README.md
@@ -45,3 +57,17 @@ api_test_search*.txt
 # User exclusions
 plans/
 package-lock.json
+RH_Skills/
+SS_tools-main/
+
+# API reference docs (not part of app source)
+4.4/
+
+# Unused / temporary files
+homepage.html
+metadata.json
+rh.png
+
+# OS files
+Thumbs.db
+Desktop.ini

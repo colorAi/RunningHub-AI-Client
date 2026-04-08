@@ -5,13 +5,14 @@ export interface NodeInfo {
   fieldValue: string;
   fieldType: 'IMAGE' | 'AUDIO' | 'VIDEO' | 'STRING' | 'INT' | 'FLOAT' | 'LIST' | 'SWITCH';
   description?: string;
-  fieldData?: string; // Often contains options for LIST types (sometimes JSON string, sometimes comma separated)
-  _taskId?: string; // Unique identifier for batch task rows (used as React key)
+  descriptionEn?: string;
+  fieldData?: string | Record<string, any> | any[];
+  _taskId?: string;
 }
 
 export interface ListOption {
-  name: string;   // Display text
-  index: string;  // Value
+  name: string;
+  index: string;
 }
 
 export interface ApiResponse<T> {
@@ -22,18 +23,28 @@ export interface ApiResponse<T> {
 
 export interface UploadData {
   fileName: string;
-  fileType: string;
+  fileType?: string;
+  downloadUrl?: string;
+  size?: string;
 }
+
+export type TaskRuntimeStatus = 'QUEUED' | 'RUNNING' | 'FAILED' | 'SUCCESS';
 
 export interface SubmitTaskData {
   taskId: string;
-  promptTips?: string; // JSON string containing node_errors
+  clientId?: string | null;
+  netWssUrl?: string | null;
+  taskStatus?: TaskRuntimeStatus | null;
+  promptTips?: string;
 }
 
 export interface TaskOutput {
   fileUrl: string;
   fileType?: string;
+  downloadUrl?: string;
 }
+
+export type PendingFilesMap = Record<string, File>;
 
 export interface HistoryItem {
   id: string;
@@ -43,13 +54,13 @@ export interface HistoryItem {
 }
 
 export interface TaskStatusData {
-  status: string; // Not explicitly in API, but inferred from logic
+  status: string;
   failedReason?: {
     node_name: string;
     exception_message: string;
     traceback: string;
   };
-  fileUrl?: string; // Present when finished in some endpoints
+  fileUrl?: string;
 }
 
 export enum AppStep {
@@ -62,16 +73,17 @@ export enum AppStep {
 export interface PromptTips {
   result: boolean;
   error: string | null;
-  node_errors: Record<string, string>;
+  node_errors: Record<string, any>;
+  outputs_to_execute?: string[];
+  [key: string]: any;
 }
 
 export interface Favorite {
   name: string;
   webappId: string;
-  // Rich data for UI
   upName?: string;
   appInfo?: WebAppInfo;
-  nodes?: NodeInfo[]; // Saved parameters for instant load
+  nodes?: NodeInfo[];
 }
 
 export interface AccountInfo {
@@ -88,18 +100,21 @@ export interface ApiKeyConfig {
 }
 
 export interface ApiKeyEntry {
-  id: string;                    // Unique identifier for React key
-  apiKey: string;                // The actual API key value
-  concurrency?: number;          // Max concurrent tasks for this key
-  accountInfo?: AccountInfo | null;  // Fetched account info
-  loading?: boolean;             // Loading state for this specific key
-  error?: string;                // Error message for this specific key
+  id: string;
+  apiKey: string;
+  concurrency?: number;
+  accountInfo?: AccountInfo | null;
+  loading?: boolean;
+  error?: string;
 }
 
 export interface AutoSaveConfig {
   enabled: boolean;
   directoryName: string | null;
+  directoryPath?: string | null;
 }
+
+export type HomeDefaultTab = 'official' | 'excellent' | 'support';
 
 export interface WebAppInfo {
   webappName: string;
@@ -115,14 +130,13 @@ export interface WebAppInfo {
   };
 }
 
-// Duck decode configuration
 export interface DecodeConfig {
-  enabled: boolean;           // Enable decode for current app
-  password: string;           // Decode password (empty if not needed)
-  autoDecodeEnabled: boolean; // Auto-decode on task completion
+  enabled: boolean;
+  password: string;
+  autoDecodeEnabled: boolean;
+  alwaysOn: boolean;
 }
 
-// Duck decode result
 export interface DecodeResult {
   success: boolean;
   data?: Blob;
@@ -137,12 +151,78 @@ export interface RecentApp {
   timestamp: number;
 }
 
-// 批量任务失败信息
 export interface FailedTaskInfo {
-  batchIndex: number;      // 在批量列表中的索引 (0-based)
-  errorMessage: string;    // 错误信息
-  timestamp: number;       // 失败时间
+  batchIndex: number;
+  errorMessage: string;
+  timestamp: number;
 }
 
-// InstanceType - 机器实例类型
 export type InstanceType = 'default' | 'plus';
+
+export type SkillOutputType = 'image' | 'video' | 'audio' | '3d' | 'string';
+
+export type SkillParamType =
+  | 'IMAGE'
+  | 'VIDEO'
+  | 'AUDIO'
+  | 'STRING'
+  | 'INT'
+  | 'FLOAT'
+  | 'LIST'
+  | 'BOOLEAN';
+
+export interface SkillParamDefinition {
+  key: string;
+  type: SkillParamType;
+  required?: boolean;
+  default?: string | number | boolean;
+  min?: number;
+  max?: number;
+  options?: string[];
+  tags?: string[];
+  multiple?: boolean;
+  maxCount?: number;
+  maxSizeMB?: number;
+}
+
+export interface SkillCapability {
+  endpoint: string;
+  name_cn: string;
+  name_en: string;
+  task: string;
+  output_type: SkillOutputType;
+  category: string;
+  popularity: number;
+  tags: string[];
+  params: SkillParamDefinition[];
+}
+
+export interface SkillCatalog {
+  version: string;
+  total: number;
+  endpoints: SkillCapability[];
+}
+
+export interface SkillRunOutput {
+  kind: 'file' | 'text';
+  fileUrl?: string;
+  fileType?: string;
+  downloadUrl?: string;
+  text?: string;
+}
+
+export interface SkillRunUsage {
+  thirdPartyConsumeMoney: string;
+  consumeMoney: string;
+  consumeCoins: string;
+  taskCostTime: string;
+}
+
+export interface SkillTaskResult {
+  taskId: string;
+  status: TaskRuntimeStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  outputs: SkillRunOutput[];
+  usage?: SkillRunUsage;
+}

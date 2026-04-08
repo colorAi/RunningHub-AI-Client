@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { HistoryItem, DecodeConfig } from '../types';
 import { Download, ExternalLink, FileIcon, ImageIcon, VideoIcon, History, Trash2, Maximize2, X, Clock, Terminal, Unlock, Loader2 } from 'lucide-react';
-import { decodeDuckImage } from '../utils/duckDecoder';
+import { decodeDuckImage, isLikelyDuckCarrierImage } from '../utils/duckDecoder';
+import { isDecodeFeatureEnabled, shouldAutoDecodeOutputs } from '../utils/decodeConfig';
 
 interface StepResultProps {
   history: HistoryItem[];
@@ -169,7 +170,10 @@ const StepResult: React.FC<StepResultProps> = ({ history, decodeConfig, onClear 
 
             const isDecoded = !!decodedUrls[originalUrl];
             const isDecoding = !!decodingUrls[originalUrl];
-            const showDecodeButton = decodeConfig.enabled && !decodeConfig.autoDecodeEnabled && !isDecoded && type === 'image';
+            const showDecodeButton = isDecodeFeatureEnabled(decodeConfig)
+              && !shouldAutoDecodeOutputs(decodeConfig)
+              && !isDecoded
+              && isLikelyDuckCarrierImage(originalUrl, output.fileType);
 
 
             return (

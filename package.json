@@ -1,7 +1,7 @@
 {
-  "name": "runninghub-ai-客户端1.5.6",
+  "name": "runninghub-ai-客户端1.6.1",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.6.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,12 +15,13 @@
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
-    "@tauri-apps/api": "^2.9.1",
-    "@tauri-apps/cli": "^2.9.6",
-    "@tauri-apps/plugin-dialog": "^2.6.0",
-    "@tauri-apps/plugin-fs": "^2.4.5",
-    "@tauri-apps/plugin-http": "^2.5.6",
-    "@tauri-apps/plugin-shell": "^2.3.4",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.7.0",
+    "@tauri-apps/plugin-fs": "^2.5.0",
+    "@tauri-apps/plugin-http": "^2.5.8",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-store": "^2.4.2",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",

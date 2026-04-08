@@ -1,10 +1,12 @@
-import React, { useEffect, useState, useRef, forwardRef, useImperativeHandle } from 'react';
-import { submitTask, queryTaskOutputs, getAccountInfo, uploadFile } from '../services/api';
-import { NodeInfo, TaskOutput, PromptTips, ApiKeyConfig, DecodeConfig, FailedTaskInfo, InstanceType } from '../types';
-import { Loader2, CheckCircle2, XCircle, Clock, AlertTriangle, Terminal, Activity, Layers, FolderOpen, Coins } from 'lucide-react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { CheckCircle2, Clock, AlertTriangle, Terminal, Activity, Loader2, XCircle } from 'lucide-react';
 import { saveMultipleFiles, getDirectoryName } from '../services/autoSaveService';
-import { PendingFilesMap } from './BatchSettingsModal';
-import { decodeDuckImage } from '../utils/duckDecoder';
+import { connectTaskProgress, TaskProgressSnapshot } from '../services/taskProgress';
+import { isCapacityLimitedError, queryTaskResult, submitTask, uploadFile } from '../services/api';
+import { createApiCapacityManagers } from '../services/apiCapacity';
+import { ApiKeyConfig, DecodeConfig, FailedTaskInfo, InstanceType, NodeInfo, PendingFilesMap, PromptTips, TaskOutput } from '../types';
+import { decodeDuckImage, isLikelyDuckCarrierImage } from '../utils/duckDecoder';
+import { shouldAutoDecodeOutputs } from '../utils/decodeConfig';
 
 interface StepRunningProps {
   apiConfigs: ApiKeyConfig[];
@@ -26,30 +28,163 @@ export interface StepRunningRef {
   cancelWithSummary: () => void;
 }
 
-const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, webappId, nodes, batchList, pendingFiles, autoSaveEnabled, decodeConfig, batchTaskName, instanceType, onComplete, onBack, onBatchComplete, onBatchCancel }, ref) => {
-  const [status, setStatus] = useState<'INIT' | 'SUBMITTING' | 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILED'>('INIT');
+type ViewStatus = 'INIT' | 'SUBMITTING' | 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+
+const POLL_INTERVAL_MS = 4000;
+const CAPACITY_WAIT_MS = 3000;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const parsePromptTips = (raw?: string | PromptTips | null): PromptTips | null => {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as PromptTips;
+    } catch {
+      return null;
+    }
+  }
+  return raw;
+};
+
+const buildNodeNameMap = (taskNodes: NodeInfo[]): Record<string, string> =>
+  taskNodes.reduce<Record<string, string>>((acc, node) => {
+    acc[String(node.nodeId)] = node.nodeName || node.description || node.fieldName || `#${node.nodeId}`;
+    return acc;
+  }, {});
+
+const parseNodeErrors = (nodeErrors: Record<string, any>): { message: string; details: string } => {
+  for (const [nodeId, nodeError] of Object.entries(nodeErrors || {})) {
+    if (nodeError && typeof nodeError === 'object') {
+      const errors = Array.isArray(nodeError.errors) ? nodeError.errors : [nodeError];
+      const nodeName = nodeError.node_name || nodeError.class_type || nodeId;
+
+      for (const err of errors) {
+        const details = err?.details || err?.message || '';
+
+        if (details.includes('API balance is insufficient') || details.includes('please recharge')) {
+          return {
+            message: '第三方 API 余额不足',
+            details: `节点 ${nodeName} 依赖的第三方服务余额不足，请先充值后重试。\n${details}`.trim(),
+          };
+        }
+
+        if (details.includes('Invalid API') || details.includes('API key')) {
+          return {
+            message: '第三方 API Key 无效',
+            details: `节点 ${nodeName} 的第三方密钥无效，请检查节点配置。\n${details}`.trim(),
+          };
+        }
+
+        if (err?.type === 'custom_validation_failed') {
+          return {
+            message: '节点参数校验失败',
+            details: `节点 ${nodeName} 的参数未通过校验。\n${details}`.trim(),
+          };
+        }
+      }
+    }
+  }
+
+  return {
+    message: '节点执行失败',
+    details: JSON.stringify(nodeErrors, null, 2),
+  };
+};
+
+const extractTaskError = (params: {
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  failedReason?: { node_name?: string; exception_message?: string } | null;
+  promptTips?: PromptTips | string | null;
+}): string => {
+  const promptTips = parsePromptTips(params.promptTips);
+  if (promptTips?.node_errors && Object.keys(promptTips.node_errors).length > 0) {
+    const parsed = parseNodeErrors(promptTips.node_errors);
+    return `${parsed.message}\n\n${parsed.details}`;
+  }
+
+  if (params.failedReason?.exception_message) {
+    const prefix = params.failedReason.node_name ? `${params.failedReason.node_name}: ` : '';
+    return `${prefix}${params.failedReason.exception_message}`;
+  }
+
+  const codePrefix = params.errorCode ? `[${params.errorCode}] ` : '';
+  return `${codePrefix}${params.errorMessage || '任务执行失败'}`;
+};
+
+const statusTitleMap: Record<ViewStatus, string> = {
+  INIT: '准备中',
+  SUBMITTING: '提交中',
+  QUEUED: '排队中',
+  RUNNING: '运行中',
+  SUCCESS: '执行完成',
+  FAILED: '执行失败',
+};
+
+const statusDescriptionMap: Record<ViewStatus, string> = {
+  INIT: '正在准备任务环境...',
+  SUBMITTING: '正在提交任务到 RunningHub...',
+  QUEUED: '任务已提交，等待资源分配。',
+  RUNNING: '任务正在执行，结果会自动刷新。',
+  SUCCESS: '任务已执行完成。',
+  FAILED: '请查看下方日志和错误详情。',
+};
+
+const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
+  apiConfigs,
+  webappId,
+  nodes,
+  batchList,
+  pendingFiles,
+  autoSaveEnabled,
+  decodeConfig,
+  batchTaskName,
+  instanceType,
+  onComplete,
+  onBack,
+  onBatchComplete,
+  onBatchCancel,
+}, ref) => {
+  const [status, setStatus] = useState<ViewStatus>('INIT');
   const [logs, setLogs] = useState<string[]>([]);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [cancelMessage, setCancelMessage] = useState<string | null>(null);
-
-  // Batch state
   const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
-  const [startCoins, setStartCoins] = useState<number | null>(null);
-  const [coinsConsumed, setCoinsConsumed] = useState<number | null>(null);
   const [savedFilesCount, setSavedFilesCount] = useState(0);
+  const [progressContext, setProgressContext] = useState<string>('');
+  const [progressSnapshot, setProgressSnapshot] = useState<TaskProgressSnapshot | null>(null);
 
-  const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startTimeRef = useRef<number>(0);
-  const hasStartedRef = useRef<boolean>(false); // Prevent React StrictMode double execution
-  // 不再限制客户端超时，完全依赖服务端任务状态
+  const taskUsageMapRef = useRef<Map<number, { coins: number; thirdParty: number; taskTime: number }>>(new Map());
+  const hasStartedRef = useRef(false);
+  const activeConnectionsRef = useRef<Set<{ close: () => void }>>(new Set());
+  const savedFilesCountRef = useRef(0);
 
-  const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  const addLog = (msg: string) => {
+    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  };
 
-  // Auto-decode outputs if decode config is enabled
-  const processOutputsWithDecode = async (outputs: TaskOutput[], logTag: string = ''): Promise<{ decodedOutputs: TaskOutput[], decodedCount: number }> => {
-    if (!decodeConfig.enabled || !decodeConfig.autoDecodeEnabled) {
+  const registerConnection = (connection: { close: () => void } | null) => {
+    if (!connection) return () => {};
+    activeConnectionsRef.current.add(connection);
+    return () => {
+      connection.close();
+      activeConnectionsRef.current.delete(connection);
+    };
+  };
+
+  const closeAllConnections = () => {
+    activeConnectionsRef.current.forEach(connection => connection.close());
+    activeConnectionsRef.current.clear();
+  };
+
+  const processOutputsWithDecode = async (
+    outputs: TaskOutput[],
+    logPrefix = '',
+  ): Promise<{ decodedOutputs: TaskOutput[]; decodedCount: number }> => {
+    if (!shouldAutoDecodeOutputs(decodeConfig)) {
       return { decodedOutputs: outputs, decodedCount: 0 };
     }
 
@@ -58,38 +193,35 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
 
     for (const output of outputs) {
       const url = output.fileUrl;
-      // Only try to decode image files
-      if (/\.(jpg|jpeg|png|webp)$/i.test(url)) {
-        try {
-          addLog(`${logTag}🔍 尝试解码: ${url.split('/').pop()}`);
-          const result = await decodeDuckImage(url, decodeConfig.password);
-          if (result.success && result.data) {
-            // Create blob URL for decoded content
-            const decodedUrl = URL.createObjectURL(result.data);
-            decodedOutputs.push({
-              fileUrl: decodedUrl,
-              fileType: result.extension || 'png' // Store decoded extension
-            });
-            decodedCount++;
-            addLog(`${logTag}🔓 解码成功! 格式: ${result.extension}`);
-          } else if (result.error === 'PASSWORD_REQUIRED') {
-            addLog(`${logTag}⚠️ 解码需要密码`);
-            decodedOutputs.push(output);
+      if (!isLikelyDuckCarrierImage(url, output.fileType)) {
+        decodedOutputs.push(output);
+        continue;
+      }
+
+      try {
+        addLog(`${logPrefix}尝试解码 ${url.split('/').pop() || url}`);
+        const result = await decodeDuckImage(url, decodeConfig.password);
+        if (result.success && result.data) {
+          decodedOutputs.push({
+            fileUrl: URL.createObjectURL(result.data),
+            fileType: result.extension || output.fileType || 'png',
+          });
+          decodedCount += 1;
+          addLog(`${logPrefix}${url.split('/').pop() || url} 已解码为 ${result.extension || output.fileType || 'bin'}`);
+        } else {
+          if (result.error === 'PASSWORD_REQUIRED') {
+            addLog(`${logPrefix}${url.split('/').pop() || url} 需要解码密码，已跳过`);
           } else if (result.error === 'WRONG_PASSWORD') {
-            addLog(`${logTag}⚠️ 密码错误`);
-            decodedOutputs.push(output);
+            addLog(`${logPrefix}${url.split('/').pop() || url} 解码密码错误，已跳过`);
           } else if (result.error === 'NOT_DUCK_IMAGE') {
-            addLog(`${logTag}ℹ️ 非小黄鸭图像，跳过`);
-            decodedOutputs.push(output);
+            addLog(`${logPrefix}${url.split('/').pop() || url} 不是小黄鸭加密图，已跳过`);
           } else {
-            addLog(`${logTag}⚠️ 解码失败: ${result.error || result.errorMessage || '未知错误'}`);
-            decodedOutputs.push(output);
+            addLog(`${logPrefix}${url.split('/').pop() || url} 解码失败: ${result.errorMessage || result.error || '未知错误'}`);
           }
-        } catch (e: any) {
-          addLog(`${logTag}❌ 解码异常: ${e.message || e}`);
           decodedOutputs.push(output);
         }
-      } else {
+      } catch (error: any) {
+        addLog(`${logPrefix}解码失败: ${error.message || error}`);
         decodedOutputs.push(output);
       }
     }
@@ -97,57 +229,175 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
     return { decodedOutputs, decodedCount };
   };
 
-  // 解析节点错误，返回友好的错误信息
-  const parseNodeErrors = (nodeErrors: Record<string, any>): { message: string; tip: string } => {
-    // 遍历所有节点错误，查找常见错误模式
-    for (const [nodeId, nodeError] of Object.entries(nodeErrors)) {
-      // 检查是否是对象数组格式（新格式）
-      if (nodeError && typeof nodeError === 'object') {
-        const errors = nodeError.errors || [nodeError];
+  const saveOutputs = async (
+    outputs: TaskOutput[],
+    taskIndex?: number,
+    logPrefix = '',
+  ): Promise<void> => {
+    if (!autoSaveEnabled || outputs.length === 0) return;
 
-        for (const err of errors) {
-          const details = err.details || err.message || '';
-          const className = nodeError.class_type || '';
-          const nodeName = nodeError.node_name || '';
+    try {
+      const filesToSave = outputs.map(output => {
+        let filename: string | undefined;
+        let sequential = false;
 
-          // 第三方 API 余额不足
-          if (details.includes('API balance is insufficient') ||
-            details.includes('balance is insufficient') ||
-            details.includes('please recharge')) {
-            return {
-              message: '第三方 API 余额不足',
-              tip: `当前工作流 / AI 应用涉及第三方 API 调用，采用按次计费模式。\n由于您的钱包余额不足，请先前往 RunningHub 官网完成充值后再继续使用。\n\n涉及节点: ${nodeName || className || nodeId}`
-            };
-          }
-
-          // API Key 无效
-          if (details.includes('Invalid API') || details.includes('API key')) {
-            return {
-              message: '第三方 API 密钥无效',
-              tip: `节点 ${nodeName || nodeId} 的 API 密钥配置有误，请检查密钥是否正确。`
-            };
-          }
-
-          // 自定义验证失败
-          if (err.type === 'custom_validation_failed') {
-            return {
-              message: '节点参数验证失败',
-              tip: `节点 ${nodeName || nodeId} 的参数验证未通过。\n详情: ${details}`
-            };
-          }
+        if (typeof taskIndex === 'number' && batchTaskName) {
+          filename = `${batchTaskName}_T${String(taskIndex + 1).padStart(3, '0')}`;
+          sequential = true;
         }
+
+        return {
+          url: output.fileUrl,
+          extension: output.fileType,
+          filename,
+          sequential,
+        };
+      });
+
+      const savedCount = await saveMultipleFiles(filesToSave);
+      setSavedFilesCount(prev => {
+        const nextValue = prev + savedCount;
+        savedFilesCountRef.current = nextValue;
+        return nextValue;
+      });
+      if (savedCount > 0) {
+        addLog(`${logPrefix}已自动保存 ${savedCount} 个文件`);
+      } else {
+        addLog(`${logPrefix}自动保存未成功，请检查保存目录权限`);
+      }
+    } catch (error: any) {
+      addLog(`${logPrefix}自动保存失败: ${error.message || error}`);
+    }
+  };
+
+  const uploadPendingFilesForTask = async (
+    apiKey: string,
+    taskNodes: NodeInfo[],
+    taskIndex: number,
+    logPrefix = '',
+  ): Promise<NodeInfo[]> => {
+    if (!pendingFiles || Object.keys(pendingFiles).length === 0) {
+      return taskNodes.map(node => ({ ...node }));
+    }
+
+    const currentTaskId = taskNodes[0]?._taskId || `task-${taskIndex}`;
+    const filesToUpload: { nodeId: string; fieldName: string; file: File }[] = [];
+
+    (Object.entries(pendingFiles) as [string, File][]).forEach(([key, file]) => {
+      const [taskId, nodeId, fieldName] = key.split('|');
+      if (taskId === currentTaskId || taskId === `task-${taskIndex}`) {
+        filesToUpload.push({ nodeId, fieldName, file });
+      }
+    });
+
+    if (filesToUpload.length === 0) {
+      return taskNodes.map(node => ({ ...node }));
+    }
+
+    addLog(`${logPrefix}上传 ${filesToUpload.length} 个输入文件`);
+    const clonedNodes = taskNodes.map(node => ({ ...node }));
+
+    for (const { nodeId, fieldName, file } of filesToUpload) {
+      const result = await uploadFile(apiKey, file);
+      const targetIndex = clonedNodes.findIndex(node => String(node.nodeId) === String(nodeId) && (node.fieldName || '') === fieldName);
+      if (targetIndex !== -1) {
+        clonedNodes[targetIndex].fieldValue = result.fileName;
       }
     }
 
-    // 默认返回原始 JSON（格式化展示）
-    return {
-      message: '节点错误',
-      tip: JSON.stringify(nodeErrors, null, 2)
-    };
+    return clonedNodes;
+  };
+
+  const monitorTaskProgress = (
+    taskNodes: NodeInfo[],
+    wssUrl: string | null | undefined,
+    contextLabel: string,
+  ): (() => void) => {
+    if (!wssUrl) {
+      return () => {};
+    }
+
+    const connection = connectTaskProgress(wssUrl, buildNodeNameMap(taskNodes), {
+      onOpen: () => addLog(`${contextLabel}已连接实时进度`),
+      onProgress: snapshot => {
+        setProgressContext(contextLabel);
+        setProgressSnapshot(snapshot);
+      },
+      onError: () => addLog(`${contextLabel}实时进度连接异常，已继续使用轮询`),
+      onClose: () => addLog(`${contextLabel}实时进度连接已关闭`),
+    });
+
+    return registerConnection(connection);
+  };
+
+  const executeTask = async (
+    apiKey: string,
+    taskNodes: NodeInfo[],
+    contextLabel: string,
+    onStatusChange?: (nextStatus: ViewStatus) => void,
+  ): Promise<{ outputs: TaskOutput[]; taskId: string; usage?: { coins: number; thirdParty: number; taskTime: number } }> => {
+    onStatusChange?.('SUBMITTING');
+    addLog(`${contextLabel}提交任务`);
+
+    const submitResult = await submitTask(apiKey, webappId, taskNodes, instanceType);
+    const submitPromptTips = parsePromptTips(submitResult.promptTips);
+    if (submitPromptTips?.node_errors && Object.keys(submitPromptTips.node_errors).length > 0) {
+      const parsed = parseNodeErrors(submitPromptTips.node_errors);
+      throw new Error(`${parsed.message}\n\n${parsed.details}`);
+    }
+
+    const initialStatus = submitResult.taskStatus === 'RUNNING' ? 'RUNNING' : 'QUEUED';
+    onStatusChange?.(initialStatus);
+    addLog(`${contextLabel}任务已提交: ${submitResult.taskId}`);
+
+    const stopProgressMonitor = monitorTaskProgress(taskNodes, submitResult.netWssUrl, contextLabel);
+    let lastStatus = initialStatus;
+
+    try {
+      while (true) {
+        const result = await queryTaskResult(apiKey, submitResult.taskId);
+
+        if (result.status === 'SUCCESS') {
+          const usage = result.usage
+            ? {
+              coins: parseFloat(result.usage.consumeCoins) || 0,
+              thirdParty: parseFloat(result.usage.thirdPartyConsumeMoney) || 0,
+              taskTime: parseInt(result.usage.taskCostTime, 10) || 0,
+            }
+            : undefined;
+
+          addLog(`${contextLabel}任务完成`);
+          return {
+            outputs: result.results,
+            taskId: submitResult.taskId,
+            usage,
+          };
+        }
+
+        if (result.status === 'FAILED') {
+          throw new Error(extractTaskError({
+            errorCode: result.errorCode,
+            errorMessage: result.errorMessage,
+            failedReason: result.failedReason,
+            promptTips: result.promptTips || submitPromptTips,
+          }));
+        }
+
+        const nextStatus = result.status === 'RUNNING' ? 'RUNNING' : 'QUEUED';
+        onStatusChange?.(nextStatus);
+        if (nextStatus !== lastStatus) {
+          addLog(`${contextLabel}${nextStatus === 'RUNNING' ? '开始执行' : '进入排队'}`);
+          lastStatus = nextStatus;
+        }
+
+        await sleep(POLL_INTERVAL_MS);
+      }
+    } finally {
+      stopProgressMonitor();
+    }
   };
 
   useEffect(() => {
-    // Prevent double execution in React StrictMode
     if (hasStartedRef.current) return;
     hasStartedRef.current = true;
 
@@ -155,503 +405,424 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
     const isBatch = !!batchList && batchList.length > 0;
     const totalTasks = isBatch ? batchList.length : 1;
     setBatchTotal(totalTasks);
+    taskUsageMapRef.current = new Map();
+    const capacityManagers = createApiCapacityManagers(apiConfigs);
 
-    // Primary API key for account info queries
-    // Use the first available key
-    const primaryApiKey = apiConfigs[0]?.apiKey || '';
-
-    // Shared state for concurrent execution
-    let nextTaskIndex = 0;
-    let completedCount = 0;
-    let failedCountLocal = 0;
-    const failedTasksLocal: FailedTaskInfo[] = []; // 记录失败任务详情
-    const initialCoinsMap: Record<string, number> = {};
-    const taskLock = { locked: false }; // Simple lock for getting next task
-
-    // Record initial RH coins for batch tasks (all API keys)
-    if (isBatch) {
-      // Fetch initial coins for all unique keys in parallel
-      const uniqueKeys = Array.from(new Set(apiConfigs.map(c => c.apiKey).filter(k => k)));
-      Promise.all(uniqueKeys.map(async (key: string) => {
-        try {
-          const info = await getAccountInfo(key);
-          initialCoinsMap[key] = parseFloat(info.remainCoins);
-        } catch (err: any) {
-          addLog(`⚠️ 无法获取账户信息 (${key.slice(0, 8)}...): ${err.message}`);
-        }
-      })).then(() => {
-        // Log total or just first one
-        if (primaryApiKey && initialCoinsMap[primaryApiKey] !== undefined) {
-          setStartCoins(initialCoinsMap[primaryApiKey]);
-          addLog(`💰 初始余额 (API1): ${initialCoinsMap[primaryApiKey].toFixed(2)} RH币`);
-        }
-        if (apiConfigs.length > 1 || apiConfigs.some(c => c.concurrency > 1)) {
-          const totalWorkers = apiConfigs.reduce((acc, c) => acc + (c.concurrency || 1), 0);
-          addLog(`🚀 使用 ${apiConfigs.length} 个 API (共 ${totalWorkers} 并发) 执行任务`);
-        }
-      });
-    }
-
-    // Get next task index atomically
-    const getNextTaskIndex = (): number | null => {
-      if (taskLock.locked) return null;
-      taskLock.locked = true;
-      const idx = nextTaskIndex < totalTasks ? nextTaskIndex++ : null;
-      taskLock.locked = false;
-      return idx;
-    };
-
-    // Check if all tasks are done and finalize
-    const checkAllDone = () => {
-      if (completedCount + failedCountLocal >= totalTasks) {
-        setStatus('SUCCESS');
-        setFailedCount(failedCountLocal);
-
-        const successCount = totalTasks - failedCountLocal;
-        const dirName = getDirectoryName();
-        const summaryLogs: string[] = [];
-
-        summaryLogs.push(`✅ 所有批量任务完成！`);
-
-        if (autoSaveEnabled && dirName) {
-          summaryLogs.push(`📁 成功保存 ${successCount} 个文件到目录: ${dirName}`);
-          if (failedCountLocal > 0) {
-            summaryLogs.push(`⚠️ ${failedCountLocal} 个任务失败`);
-          }
-        } else {
-          summaryLogs.push(`📊 成功: ${successCount} 个, 失败: ${failedCountLocal} 个`);
-        }
-
-        // Query final RH coins then call onBatchComplete
-        // Query final RH coins for all keys and calculate total consumption
-        const uniqueKeys = Array.from(new Set(apiConfigs.map(c => c.apiKey).filter(k => k)));
-        Promise.all(uniqueKeys.map(async (key: string) => {
-          try {
-            const info = await getAccountInfo(key);
-            return { key, final: parseFloat(info.remainCoins) };
-          } catch (e) {
-            return { key, final: null };
-          }
-        })).then((results) => {
-          let totalConsumed = 0;
-          let validCount = 0;
-
-          results.forEach(({ key, final }, index) => {
-            if (final !== null && initialCoinsMap[key] !== undefined) {
-              const start = initialCoinsMap[key];
-              const consumed = Math.max(0, start - final); // Prevent negative consumption if recharge happened
-              totalConsumed += consumed;
-              validCount++;
-
-              const apiTag = apiConfigs.length > 1 ? `[API(${key.slice(-4)})]` : '';
-              summaryLogs.push(`💰 ${apiTag}消耗: ${consumed.toFixed(2)} | 剩余: ${final.toFixed(2)}`);
-            }
-          });
-
-          if (validCount === 0) {
-            summaryLogs.push(`⚠️ 无法计算消耗 (获取账户信息失败)`);
-          }
-
-          onBatchComplete(summaryLogs, failedTasksLocal);
-        });
+    const runSingleTaskAdaptive = async () => {
+      const manager = capacityManagers[0];
+      if (!manager) {
+        setStatus('FAILED');
+        setErrorDetails('没有可用的 API Key');
+        return;
       }
-    };
 
-    // Worker function for each API key
-    const runWorker = async (apiKey: string, workerId: string) => {
-      // If multiple keys, show which one. If high concurrency, show worker ID maybe?
-      // Keeping it simple to avoid log clutter: [API1] or similar
-      const workerTag = apiConfigs.length > 1 ? `[${workerId}]` : '';
+      let hasLoggedWait = false;
 
       while (active) {
-        // Get next task
-        const taskIndex = getNextTaskIndex();
-        if (taskIndex === null) {
-          // No more tasks
-          return;
-        }
-
-        const taskNodes = batchList![taskIndex];
-        addLog(`${workerTag} 🔄 开始任务 ${taskIndex + 1}/${totalTasks}`);
+        let slotReserved = false;
 
         try {
-          // 0. Upload pending files for this batch before submitting
-          let nodesToSubmit = taskNodes;
-          if (pendingFiles && Object.keys(pendingFiles).length > 0) {
-            const filesToUpload: { nodeId: string; fieldName: string; file: File }[] = [];
-            
-            // Get the taskId for current batch task
-            const currentTaskId = taskNodes[0]?._taskId || `task-${taskIndex}`;
-            
-            for (const [key, file] of Object.entries(pendingFiles) as [string, File][]) {
-              const [taskId, nodeId, fieldName] = key.split('|');
-              
-              // Match by taskId (new format) or fallback to batchIndex (old format for compatibility)
-              if (taskId === currentTaskId || taskId === `task-${taskIndex}`) {
-                filesToUpload.push({ nodeId, fieldName, file });
-              }
-            }
-
-            if (filesToUpload.length > 0) {
-              addLog(`${workerTag} 📤 上传 ${filesToUpload.length} 个文件...`);
-              nodesToSubmit = JSON.parse(JSON.stringify(taskNodes));
-
-              for (const { nodeId, fieldName, file } of filesToUpload) {
-                try {
-                  const result = await uploadFile(apiKey, file);
-                  const nodeIndex = nodesToSubmit.findIndex(n => String(n.nodeId) === String(nodeId) && (n.fieldName || '') === fieldName);
-                  if (nodeIndex !== -1) {
-                    nodesToSubmit[nodeIndex].fieldValue = result.fileName;
-                  }
-                } catch (uploadErr: any) {
-                  throw new Error(`文件上传失败: ${file.name}`);
-                }
-              }
-            }
-          }
-
-          // 1. Submit Task
-          setStatus('RUNNING');
-          const submitRes = await submitTask(apiKey, webappId, nodesToSubmit, instanceType);
-
+          const snapshot = await manager.probe(hasLoggedWait);
           if (!active) return;
 
-          const taskId = submitRes.taskId;
-          addLog(`${workerTag} 📝 任务 ${taskIndex + 1} 已提交 (${taskId.substring(0, 8)}...)`);
-
-          // Check for immediate node errors
-          if (submitRes.promptTips) {
-            try {
-              const promptTips: PromptTips = JSON.parse(submitRes.promptTips);
-              if (promptTips.node_errors && Object.keys(promptTips.node_errors).length > 0) {
-                const { message } = parseNodeErrors(promptTips.node_errors);
-                throw new Error(message);
-              }
-            } catch (e: any) {
-              if (e.message !== 'Unexpected') throw e;
+          if (snapshot.availableSlots <= 0) {
+            setStatus('QUEUED');
+            if (!hasLoggedWait) {
+              addLog('当前 API 并发已被其他任务占用，等待空闲槽位后自动继续...');
+              hasLoggedWait = true;
             }
+            await sleep(CAPACITY_WAIT_MS);
+            manager.markProbeStale();
+            continue;
           }
 
-          // 2. Poll Status until complete
-          let taskComplete = false;
-
-          while (!taskComplete && active) {
-            try {
-              const res = await queryTaskOutputs(apiKey, taskId);
-
-              if (res.code === 0 && res.data && res.data.length > 0) {
-                // Task Success
-                taskComplete = true;
-                completedCount++;
-                setCurrentBatchIndex(completedCount + failedCountLocal);
-                addLog(`${workerTag} 🎉 任务 ${taskIndex + 1} 完成！`);
-
-                // Background save (with optional decode)
-                if (autoSaveEnabled) {
-                  try {
-                    const { decodedOutputs, decodedCount } = await processOutputsWithDecode(res.data, workerTag + ' ');
-                    // Pass file info with extensions for proper blob URL saving
-                    const filesToSave = decodedOutputs.map((o, idx) => {
-                      // Generate custom filename if batchTaskName is provided
-                      let filename: string | undefined = undefined;
-                      let sequential = false;
-                      if (batchTaskName) {
-                        // Base name format: TaskName_T001
-                        // autoSaveService will append _00001.ext, _00002.ext etc. sequentially
-                        filename = `${batchTaskName}_T${String(taskIndex + 1).padStart(3, '0')}`;
-                        sequential = true;
-                      }
-                      return {
-                        url: o.fileUrl,
-                        extension: o.fileType,
-                        filename,
-                        sequential
-                      };
-                    });
-                    const savedCount = await saveMultipleFiles(filesToSave);
-                    setSavedFilesCount(prev => prev + savedCount);
-                    if (decodedCount > 0) {
-                      addLog(`${workerTag} 📁 保存 ${savedCount} 个文件 (${decodedCount} 个已解码)`);
-                    }
-                  } catch (e: any) {
-                    addLog(`${workerTag} ⚠️ 保存失败: ${e.message}`);
-                  }
-                }
-              } else if (res.code === 804 || res.code === 813) {
-                // 804: APIKEY_TASK_IS_RUNNING (运行中)
-                // 813: APIKEY_TASK_IS_QUEUED (排队中)
-                // Still running or queued, wait and poll again
-                await new Promise(resolve => setTimeout(resolve, 3000));
-              } else if (res.code === 805) {
-                // 805: APIKEY_TASK_STATUS_ERROR (任务失败，包括执行错误)
-                const reason = res.data?.failedReason;
-                const msg = reason ? `${reason.node_name || 'Node'}: ${reason.exception_message || 'Error'}` : (res.msg || '任务执行失败');
-                throw new Error(msg);
-              } else {
-                // 其他非0错误码 (安审失败、参数错误等) - 视为任务失败
-                const failedReason = res.data?.failedReason;
-                let msg = res.msg || `任务失败 (code: ${res.code})`;
-                if (failedReason?.exception_message) {
-                  msg = failedReason.exception_message;
-                }
-                throw new Error(msg);
-              }
-            } catch (err: any) {
-              // 如果是我们主动抛出的错误，向上传递
-              if (err.message && !err.message.includes('fetch')) {
-                throw err;
-              }
-              // 网络错误等，重试
-              addLog(`${workerTag} ⚠️ 轮询出错，3秒后重试: ${err.message}`);
-              await new Promise(resolve => setTimeout(resolve, 3000));
-            }
+          if (!manager.reserveSlot()) {
+            await sleep(CAPACITY_WAIT_MS);
+            manager.markProbeStale();
+            continue;
           }
 
-          // Check if all done
-          checkAllDone();
+          slotReserved = true;
+          hasLoggedWait = false;
 
-        } catch (err: any) {
+          const result = await executeTask(manager.apiKey, nodes, '', nextStatus => active && setStatus(nextStatus));
           if (!active) return;
 
-          failedCountLocal++;
-          // 记录失败任务详情
-          failedTasksLocal.push({
-            batchIndex: taskIndex,
-            errorMessage: err.message || '未知错误',
-            timestamp: Date.now()
-          });
-          setFailedCount(failedCountLocal);
-          setCurrentBatchIndex(completedCount + failedCountLocal);
-          addLog(`${workerTag} ❌ 任务 ${taskIndex + 1} 失败: ${err.message}`);
+          const { decodedOutputs, decodedCount } = await processOutputsWithDecode(result.outputs);
+          if (decodedCount > 0) {
+            addLog(`已解码 ${decodedCount} 个结果文件`);
+          }
 
-          // Check if all done
-          checkAllDone();
+          await saveOutputs(decodedOutputs);
+          setStatus('SUCCESS');
+          onComplete(decodedOutputs, result.taskId);
+          return;
+        } catch (error: any) {
+          if (!active) return;
+
+          if (isCapacityLimitedError(error)) {
+            setStatus('QUEUED');
+            manager.markProbeStale();
+            addLog('API 并发暂时已满，已自动等待后重试。');
+            await sleep(CAPACITY_WAIT_MS);
+            continue;
+          }
+
+          setStatus('FAILED');
+          setErrorDetails(error.message || '任务执行失败');
+          addLog(`任务失败: ${error.message || error}`);
+          return;
+        } finally {
+          if (slotReserved) {
+            manager.releaseSlot();
+          }
         }
-
-        // Small delay before picking up next task
-        await new Promise(resolve => setTimeout(resolve, 500));
       }
     };
 
-    // Single task execution (non-batch)
-    const runSingleTask = async (taskNodes: NodeInfo[]) => {
-      const apiKey = primaryApiKey;
-      if (!apiKey) {
-        addLog(`❌ 无可用的 API Key`);
+    const runBatchTasksAdaptive = async () => {
+      if (capacityManagers.length === 0) {
         setStatus('FAILED');
-        setErrorDetails('没有有效的 API Key');
+        setErrorDetails('没有可用的 API Key');
+        return;
+      }
+
+      const pendingTaskIndices = Array.from({ length: totalTasks }, (_, index) => index);
+      const runningTasks = new Set<Promise<void>>();
+      let completedCount = 0;
+      let failedCountLocal = 0;
+      let hasLoggedWait = false;
+      const failedTasksLocal: FailedTaskInfo[] = [];
+
+      const finalizeBatch = () => {
+        const successCount = totalTasks - failedCountLocal;
+        const dirName = getDirectoryName();
+        const summaryLogs: string[] = [`全部批量任务已结束，成功 ${successCount} 个，失败 ${failedCountLocal} 个。`];
+
+        if (autoSaveEnabled && dirName && savedFilesCountRef.current > 0) {
+          summaryLogs.push(`结果已保存到目录: ${dirName}`);
+        }
+
+        const totalUsage = { coins: 0, thirdParty: 0, taskTime: 0 };
+        taskUsageMapRef.current.forEach(usage => {
+          totalUsage.coins += usage.coins;
+          totalUsage.thirdParty += usage.thirdParty;
+          totalUsage.taskTime += usage.taskTime;
+        });
+
+        if (taskUsageMapRef.current.size > 0) {
+          summaryLogs.push(`累计消耗 RH 币: ${totalUsage.coins.toFixed(2)}`);
+          if (totalUsage.thirdParty > 0) {
+            summaryLogs.push(`累计第三方消耗: ${totalUsage.thirdParty.toFixed(2)}`);
+          }
+          if (totalUsage.taskTime > 0) {
+            summaryLogs.push(`累计运行时长: ${totalUsage.taskTime} 秒`);
+          }
+        }
+
+        setStatus('SUCCESS');
+        setFailedCount(failedCountLocal);
+        onBatchComplete(summaryLogs, failedTasksLocal);
+      };
+
+      while (active && (pendingTaskIndices.length > 0 || runningTasks.size > 0)) {
+        let launchedCount = 0;
+
+        for (const manager of capacityManagers) {
+          if (!active || pendingTaskIndices.length === 0) {
+            break;
+          }
+
+          const snapshot = await manager.probe(launchedCount === 0);
+          if (!active) return;
+
+          let availableSlots = snapshot.availableSlots;
+          while (active && availableSlots > 0 && pendingTaskIndices.length > 0) {
+            const taskIndex = pendingTaskIndices.shift();
+            if (taskIndex == null) {
+              break;
+            }
+
+            if (!manager.reserveSlot()) {
+              pendingTaskIndices.unshift(taskIndex);
+              break;
+            }
+
+            availableSlots -= 1;
+            launchedCount += 1;
+            hasLoggedWait = false;
+
+            let taskPromise: Promise<void>;
+            taskPromise = (async () => {
+              const apiLabel = capacityManagers.length > 1 ? `[API${manager.index + 1}] ` : '';
+              const taskNodes = batchList![taskIndex];
+              const logPrefix = `${apiLabel}任务 ${taskIndex + 1}/${totalTasks}: `;
+
+              try {
+                setStatus('RUNNING');
+                const nodesToSubmit = await uploadPendingFilesForTask(manager.apiKey, taskNodes, taskIndex, logPrefix);
+                const result = await executeTask(manager.apiKey, nodesToSubmit, logPrefix, nextStatus => active && setStatus(nextStatus === 'QUEUED' ? 'QUEUED' : 'RUNNING'));
+                if (!active) return;
+
+                if (result.usage) {
+                  taskUsageMapRef.current.set(taskIndex, result.usage);
+                }
+
+                const { decodedOutputs, decodedCount } = await processOutputsWithDecode(result.outputs, logPrefix);
+                if (decodedCount > 0) {
+                  addLog(`${logPrefix}已解码 ${decodedCount} 个结果文件`);
+                }
+
+                await saveOutputs(decodedOutputs, taskIndex, logPrefix);
+
+                completedCount += 1;
+                setCurrentBatchIndex(completedCount + failedCountLocal);
+                addLog(`${logPrefix}已完成`);
+              } catch (error: any) {
+                if (!active) return;
+
+                if (isCapacityLimitedError(error)) {
+                  pendingTaskIndices.unshift(taskIndex);
+                  manager.markProbeStale();
+                  setStatus('QUEUED');
+                  addLog(`${logPrefix}API 并发暂时已满，已回到队列等待自动重试`);
+                  return;
+                }
+
+                failedCountLocal += 1;
+                setFailedCount(failedCountLocal);
+                setCurrentBatchIndex(completedCount + failedCountLocal);
+                failedTasksLocal.push({
+                  batchIndex: taskIndex,
+                  errorMessage: error.message || '未知错误',
+                  timestamp: Date.now(),
+                });
+                addLog(`${logPrefix}失败: ${error.message || error}`);
+              } finally {
+                manager.releaseSlot();
+              }
+            })().finally(() => {
+              runningTasks.delete(taskPromise);
+            });
+
+            runningTasks.add(taskPromise);
+          }
+        }
+
+        if (!active) return;
+
+        if (launchedCount > 0) {
+          continue;
+        }
+
+        if (runningTasks.size > 0) {
+          await Promise.race(runningTasks);
+          continue;
+        }
+
+        if (pendingTaskIndices.length > 0) {
+          setStatus('QUEUED');
+          if (!hasLoggedWait) {
+            addLog('当前 API 并发已被网页或其他任务占用，系统会在有空位时自动继续...');
+            hasLoggedWait = true;
+          }
+          await sleep(CAPACITY_WAIT_MS);
+          capacityManagers.forEach(manager => manager.markProbeStale());
+        }
+      }
+
+      await Promise.all(runningTasks);
+      if (active) {
+        finalizeBatch();
+      }
+    };
+
+    const runSingleTask = async () => {
+      const apiKey = apiConfigs[0]?.apiKey || '';
+      if (!apiKey) {
+        setStatus('FAILED');
+        setErrorDetails('没有可用的 API Key');
         return;
       }
 
       try {
-        setStatus('SUBMITTING');
-        addLog('开始提交任务，请等待...');
-
-        const submitRes = await submitTask(apiKey, webappId, taskNodes, instanceType);
-
+        const result = await executeTask(apiKey, nodes, '', nextStatus => active && setStatus(nextStatus));
         if (!active) return;
 
-        const taskId = submitRes.taskId;
-        addLog(`📌 提交任务返回: Success`);
-        addLog(`📝 taskId: ${taskId}`);
-
-        // Check for immediate node errors
-        if (submitRes.promptTips) {
-          try {
-            const promptTips: PromptTips = JSON.parse(submitRes.promptTips);
-            if (promptTips.node_errors && Object.keys(promptTips.node_errors).length > 0) {
-              const { message, tip } = parseNodeErrors(promptTips.node_errors);
-              addLog(`⚠️ ${message}`);
-              setErrorDetails(`❌ ${message}\n\n${tip}`);
-              setStatus('FAILED');
-              return;
-            } else {
-              addLog(`✅ 无节点错误，任务提交成功。`);
-            }
-          } catch (e) {
-            console.warn("Could not parse promptTips", e);
-          }
+        const { decodedOutputs, decodedCount } = await processOutputsWithDecode(result.outputs);
+        if (decodedCount > 0) {
+          addLog(`已解码 ${decodedCount} 个结果文件`);
         }
 
-        // Poll Status
-        startTimeRef.current = Date.now();
-        setStatus('QUEUED');
-
-        const poll = async () => {
-          if (!active) return;
-
-          // 不再限制客户端超时，持续轮询直到服务端返回成功或失败
-
-          try {
-            const res = await queryTaskOutputs(apiKey, taskId);
-
-            if (res.code === 0 && res.data && res.data.length > 0) {
-              setStatus('SUCCESS');
-              addLog('🎉 生成结果完成！');
-
-              // Auto-decode if enabled
-              if (decodeConfig.enabled && decodeConfig.autoDecodeEnabled) {
-                addLog('🔓 正在解码...');
-                const { decodedOutputs, decodedCount } = await processOutputsWithDecode(res.data, '');
-                if (decodedCount > 0) {
-                  addLog(`✅ 已解码 ${decodedCount} 个文件`);
-                }
-                
-                // Auto-save for single task
-                if (autoSaveEnabled) {
-                  try {
-                    const filesToSave = decodedOutputs.map(o => ({
-                      url: o.fileUrl,
-                      extension: o.fileType
-                    }));
-                    const savedCount = await saveMultipleFiles(filesToSave);
-                    if (savedCount > 0) {
-                      addLog(`📁 已保存 ${savedCount} 个文件`);
-                    }
-                  } catch (e: any) {
-                    addLog(`⚠️ 保存失败: ${e.message}`);
-                  }
-                }
-                
-                onComplete(decodedOutputs, taskId);
-              } else {
-                // Auto-save for single task (without decode)
-                if (autoSaveEnabled) {
-                  try {
-                    const filesToSave = res.data.map(o => ({
-                      url: o.fileUrl,
-                      extension: o.fileType
-                    }));
-                    const savedCount = await saveMultipleFiles(filesToSave);
-                    if (savedCount > 0) {
-                      addLog(`📁 已保存 ${savedCount} 个文件`);
-                    }
-                  } catch (e: any) {
-                    addLog(`⚠️ 保存失败: ${e.message}`);
-                  }
-                }
-                
-                onComplete(res.data, taskId);
-              }
-              return;
-            } else if (res.code === 805) {
-              const reason = res.data?.failedReason;
-              const msg = reason ? `${reason.node_name || 'Node'}: ${reason.exception_message || 'Error'}` : '未知错误';
-              setStatus('FAILED');
-              setErrorDetails(msg);
-              addLog(`❌ 任务失败！ ${msg}`);
-              return;
-            } else if (res.code === 804) {
-              if (status !== 'RUNNING') setStatus('RUNNING');
-              addLog('⏳ 任务运行中...');
-            } else if (res.code === 813) {
-              addLog('⏳ 任务排队中...');
-            }
-
-            pollingRef.current = setTimeout(poll, 5000);
-          } catch (err: any) {
-            addLog(`❌ 轮询错误: ${err.message}`);
-            pollingRef.current = setTimeout(poll, 5000);
-          }
-        };
-
-        poll();
-
-      } catch (err: any) {
+        await saveOutputs(decodedOutputs);
+        setStatus('SUCCESS');
+        onComplete(decodedOutputs, result.taskId);
+      } catch (error: any) {
         if (!active) return;
         setStatus('FAILED');
-        setErrorDetails(err.message || '未知错误');
-        addLog(`❌ 提交任务失败: ${err.message}`);
+        setErrorDetails(error.message || '任务执行失败');
+        addLog(`任务失败: ${error.message || error}`);
       }
     };
 
-    // Start execution
-    if (isBatch) {
-      // Start workers for each API key in parallel
-      // Start workers for each API key in parallel based on concurrency config
-      let workerCount = 0;
+    const runBatchTasks = async () => {
+      let nextTaskIndex = 0;
+      let completedCount = 0;
+      let failedCountLocal = 0;
+      const failedTasksLocal: FailedTaskInfo[] = [];
 
-      apiConfigs.forEach((config, configIndex) => {
-        const concurrency = config.concurrency || 1;
-        const apiKey = config.apiKey;
-        if (!apiKey) return;
+      const getNextTaskIndex = () => {
+        if (nextTaskIndex >= totalTasks) return null;
+        const current = nextTaskIndex;
+        nextTaskIndex += 1;
+        return current;
+      };
 
-        for (let i = 0; i < concurrency; i++) {
-          // Create a unique worker ID for logs
-          workerCount++;
-          const workerId = apiConfigs.length > 1 ? `API${configIndex + 1}-${i + 1}` : `Worker-${i + 1}`;
-          // Don't spawn more workers than total tasks (optimization)
-          // Actually, let's just spawn them, they will exit immediately if no task index available
-          // But to avoid too many "Start worker" logs if we have 999 concurrency for 10 tasks...
-          // checking against workerCount might not be enough since we don't know if tasks are done.
-          // But we can check if workerCount > totalTasks?
-          // No, because tasks are pulled from a shared queue.
-          // Let's spawn them all but maybe limit the initial log spam?
-          // Proceed with spawning.
-          runWorker(apiKey, workerId);
+      const finalizeBatch = () => {
+        const successCount = totalTasks - failedCountLocal;
+        const dirName = getDirectoryName();
+        const summaryLogs: string[] = [`全部批量任务已结束，成功 ${successCount} 个，失败 ${failedCountLocal} 个。`];
+
+        if (autoSaveEnabled && dirName && savedFilesCountRef.current > 0) {
+          summaryLogs.push(`结果已保存到目录: ${dirName}`);
         }
-      });
 
-      addLog(`🏁 已启动 ${workerCount} 个并发工作线程`);
+        const totalUsage = { coins: 0, thirdParty: 0, taskTime: 0 };
+        taskUsageMapRef.current.forEach(usage => {
+          totalUsage.coins += usage.coins;
+          totalUsage.thirdParty += usage.thirdParty;
+          totalUsage.taskTime += usage.taskTime;
+        });
+
+        if (taskUsageMapRef.current.size > 0) {
+          summaryLogs.push(`累计消耗 RH 币: ${totalUsage.coins.toFixed(2)}`);
+          if (totalUsage.thirdParty > 0) {
+            summaryLogs.push(`累计第三方消耗: ${totalUsage.thirdParty.toFixed(2)}`);
+          }
+          if (totalUsage.taskTime > 0) {
+            summaryLogs.push(`累计运行时长: ${totalUsage.taskTime} 秒`);
+          }
+        }
+
+        setStatus('SUCCESS');
+        setFailedCount(failedCountLocal);
+        onBatchComplete(summaryLogs, failedTasksLocal);
+      };
+
+      const worker = async (apiKey: string, workerLabel: string) => {
+        while (active) {
+          const taskIndex = getNextTaskIndex();
+          if (taskIndex == null) return;
+
+          const taskNodes = batchList![taskIndex];
+          const logPrefix = `${workerLabel}任务 ${taskIndex + 1}/${totalTasks}: `;
+
+          try {
+            setStatus('RUNNING');
+            const nodesToSubmit = await uploadPendingFilesForTask(apiKey, taskNodes, taskIndex, logPrefix);
+            const result = await executeTask(apiKey, nodesToSubmit, logPrefix, nextStatus => active && setStatus(nextStatus === 'QUEUED' ? 'QUEUED' : 'RUNNING'));
+            if (!active) return;
+
+            if (result.usage) {
+              taskUsageMapRef.current.set(taskIndex, result.usage);
+            }
+
+            const { decodedOutputs, decodedCount } = await processOutputsWithDecode(result.outputs, logPrefix);
+            if (decodedCount > 0) {
+              addLog(`${logPrefix}已解码 ${decodedCount} 个结果文件`);
+            }
+
+            await saveOutputs(decodedOutputs, taskIndex, logPrefix);
+
+            completedCount += 1;
+            setCurrentBatchIndex(completedCount + failedCountLocal);
+            addLog(`${logPrefix}已完成`);
+          } catch (error: any) {
+            if (!active) return;
+
+            failedCountLocal += 1;
+            setFailedCount(failedCountLocal);
+            setCurrentBatchIndex(completedCount + failedCountLocal);
+            failedTasksLocal.push({
+              batchIndex: taskIndex,
+              errorMessage: error.message || '未知错误',
+              timestamp: Date.now(),
+            });
+            addLog(`${logPrefix}失败: ${error.message || error}`);
+          }
+        }
+      };
+
+      const workers = apiConfigs
+        .filter(config => config.apiKey.trim())
+        .flatMap((config, configIndex) =>
+          Array.from({ length: config.concurrency || 1 }, (_, workerIndex) =>
+            worker(config.apiKey, apiConfigs.length > 1 ? `[API${configIndex + 1}-${workerIndex + 1}] ` : ''),
+          ),
+        );
+
+      if (workers.length === 0) {
+        setStatus('FAILED');
+        setErrorDetails('没有可用的 API Key');
+        return;
+      }
+
+      await Promise.all(workers);
+      if (active) {
+        finalizeBatch();
+      }
+    };
+
+    if (isBatch) {
+      void runBatchTasksAdaptive();
     } else {
-      runSingleTask(nodes);
+      void runSingleTaskAdaptive();
     }
 
     return () => {
       active = false;
       hasStartedRef.current = false;
-      if (pollingRef.current) clearTimeout(pollingRef.current);
+      closeAllConnections();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Handle cancel for batch tasks - generate summary before cancelling
-  const handleBatchCancel = async () => {
-    const isBatch = !!batchList && batchList.length > 0;
-    
-    const summaryLogs: string[] = [];
-    summaryLogs.push(`⚠️ 任务已被取消`);
-    summaryLogs.push(`ℹ️ 注意：此操作仅取消客户端状态，服务器端的任务仍会继续执行`);
-    
-    if (isBatch) {
-      summaryLogs.push(`📊 已完成: ${currentBatchIndex} / ${batchTotal} 个任务`);
+  const handleBatchCancel = () => {
+    closeAllConnections();
+
+    const summaryLogs: string[] = ['任务已在客户端停止跟踪，服务端已提交的任务可能仍在继续执行。'];
+    if (batchTotal > 1) {
+      summaryLogs.push(`当前已处理 ${currentBatchIndex}/${batchTotal} 个任务。`);
     }
 
     const dirName = getDirectoryName();
-    if (autoSaveEnabled && dirName && savedFilesCount > 0) {
-      summaryLogs.push(`📁 已保存 ${savedFilesCount} 个文件到: ${dirName}`);
+    if (autoSaveEnabled && dirName && savedFilesCountRef.current > 0) {
+      summaryLogs.push(`已保存 ${savedFilesCountRef.current} 个文件到 ${dirName}。`);
     }
 
-    // Query final RH coins
-    const primaryApiKey = apiConfigs[0]?.apiKey || '';
-    try {
-      const info = await getAccountInfo(primaryApiKey);
-      const finalCoins = parseFloat(info.remainCoins);
-      if (startCoins !== null) {
-        const consumed = startCoins - finalCoins;
-        summaryLogs.push(`💰 已消耗: ${consumed.toFixed(2)} RH币 (剩余: ${finalCoins.toFixed(2)} RH币)`);
-      }
-    } catch (e) {
-      // ignore error
+    const totalUsage = { coins: 0, thirdParty: 0, taskTime: 0 };
+    taskUsageMapRef.current.forEach(usage => {
+      totalUsage.coins += usage.coins;
+      totalUsage.thirdParty += usage.thirdParty;
+      totalUsage.taskTime += usage.taskTime;
+    });
+
+    if (taskUsageMapRef.current.size > 0) {
+      summaryLogs.push(`当前已累计消耗 RH 币 ${totalUsage.coins.toFixed(2)}。`);
     }
-    
-    // 调用适当的回调
-    if (isBatch && onBatchCancel) {
-      onBatchCancel(summaryLogs, []); // 取消时传递空数组，因为失败信息可能不完整
+
+    if (batchTotal > 1 && onBatchCancel) {
+      onBatchCancel(summaryLogs, []);
     } else {
-      // 单任务取消，显示提示信息
       setCancelMessage(summaryLogs.join('\n'));
-      // 延迟返回，让用户看到提示
-      setTimeout(() => {
-        onBack();
-      }, 3000);
+      setTimeout(() => onBack(), 2500);
     }
   };
 
-  // Expose cancel method via ref for parent component
   useImperativeHandle(ref, () => ({
-    cancelWithSummary: handleBatchCancel
+    cancelWithSummary: handleBatchCancel,
   }));
+
+  const progressPercent = progressSnapshot ? Math.round(progressSnapshot.overallPercent) : 0;
 
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-[#0F1115]/50">
@@ -663,12 +834,11 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center">
-        {/* Status Icon */}
         <div className="my-8 relative">
           {status === 'SUBMITTING' && <Loader2 className="w-16 h-16 text-brand-500 animate-spin" />}
           {(status === 'QUEUED' || status === 'RUNNING' || status === 'INIT') && (
             <div className="relative">
-              <div className="absolute inset-0 bg-brand-100 dark:bg-brand-900/40 rounded-full animate-ping opacity-75"></div>
+              <div className="absolute inset-0 bg-brand-100 dark:bg-brand-900/40 rounded-full animate-ping opacity-75" />
               <div className="relative bg-white dark:bg-slate-800 rounded-full p-2">
                 <Clock className={`w-12 h-12 ${status === 'RUNNING' ? 'text-emerald-500' : 'text-brand-500'} animate-pulse`} />
               </div>
@@ -679,34 +849,46 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
         </div>
 
         <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
-          {status === 'SUBMITTING' && '提交中'}
-          {status === 'QUEUED' && '排队中'}
-          {status === 'RUNNING' && '生成中'}
-          {status === 'FAILED' && '任务失败'}
-          {status === 'SUCCESS' && '生成完成'}
+          {statusTitleMap[status]}
         </h3>
         <p className="text-sm text-slate-500 dark:text-slate-400 text-center px-4">
-          {status === 'QUEUED' && '正在等待资源分配...'}
-          {status === 'RUNNING' && 'AI 正在处理您的请求...'}
-          {status === 'FAILED' && '请检查错误日志'}
-          {status === 'SUCCESS' && '任务已成功完成，结果如下'}
+          {statusDescriptionMap[status]}
         </p>
+
+        {progressSnapshot && (
+          <div className="mt-6 w-full max-w-xl rounded-xl border border-slate-200 dark:border-slate-800/60 bg-white dark:bg-[#161920] p-4 shadow-sm">
+            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
+              <span>{progressContext || '实时进度'}</span>
+              <span>{progressPercent}%</span>
+            </div>
+            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
+              <div className="bg-brand-500 h-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+            </div>
+            <div className="mt-3 text-sm text-slate-700 dark:text-slate-200">
+              {progressSnapshot.currentNodeName ? `当前节点: ${progressSnapshot.currentNodeName}` : '等待节点执行...'}
+            </div>
+            <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              节点进度 {Math.round(progressSnapshot.currentNodePercent)}% · 已完成 {progressSnapshot.completedNodeIds.length} 个节点
+              {progressSnapshot.cachedNodeIds.length > 0 ? ` · 命中缓存 ${progressSnapshot.cachedNodeIds.length} 个` : ''}
+            </div>
+          </div>
+        )}
 
         {batchTotal > 1 && (
           <div className="mt-6 w-full max-w-xs">
             <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
-              <span>进度</span>
-              <span>{Math.round((currentBatchIndex / batchTotal) * 100)}%</span>
+              <span>批量进度</span>
+              <span>{batchTotal > 0 ? Math.round((currentBatchIndex / batchTotal) * 100) : 0}%</span>
             </div>
             <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
               <div
                 className="bg-brand-500 h-full transition-all duration-500"
-                style={{ width: `${(currentBatchIndex / batchTotal) * 100}%` }}
-              ></div>
+                style={{ width: `${batchTotal > 0 ? (currentBatchIndex / batchTotal) * 100 : 0}%` }}
+              />
             </div>
             <div className="text-xs text-slate-400 mt-1 text-center">
-              {currentBatchIndex} / {batchTotal} 任务
-              {failedCount > 0 && <span className="text-red-400 ml-2">({failedCount} 失败)</span>}
+              {currentBatchIndex} / {batchTotal} 个任务
+              {failedCount > 0 && <span className="text-red-400 ml-2">失败 {failedCount}</span>}
             </div>
           </div>
         )}
@@ -714,7 +896,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
         {errorDetails && (
           <div className="mt-6 w-full bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/50 rounded-lg p-3">
             <div className="flex items-center gap-2 text-red-700 dark:text-red-400 text-xs font-bold mb-1">
-              <AlertTriangle className="w-4 h-4" /> 错误
+              <AlertTriangle className="w-4 h-4" /> 错误详情
             </div>
             <pre className="text-[10px] text-red-600 dark:text-red-300 font-mono whitespace-pre-wrap break-all">
               {errorDetails}
@@ -734,25 +916,20 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
         )}
       </div>
 
-      {/* Logs Console */}
       <div className="h-48 border-t border-slate-200 dark:border-slate-800/50 bg-white dark:bg-[#161920] flex flex-col">
-        <div className="bg-slate-50 dark:bg-slate-800/30 px-4 py-2 border-b border-slate-200 dark:border-slate-800/50 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Terminal className="w-3 h-3 text-slate-400" />
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Log Output</span>
-          </div>
+        <div className="bg-slate-50 dark:bg-slate-800/30 px-4 py-2 border-b border-slate-200 dark:border-slate-800/50 flex items-center gap-2">
+          <Terminal className="w-3 h-3 text-slate-400" />
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Log Output</span>
         </div>
         <div className="flex-1 bg-slate-900 dark:bg-black p-3 font-mono text-[10px] text-slate-300 dark:text-slate-400 overflow-y-auto">
-          {logs.map((log, i) => (
-            <div key={i} className="mb-1 truncate hover:text-white transition-colors border-b border-transparent hover:border-slate-800">
+          {logs.map((log, index) => (
+            <div key={index} className="mb-1 truncate hover:text-white transition-colors border-b border-transparent hover:border-slate-800">
               {log}
             </div>
           ))}
-          <div ref={(el) => el?.scrollIntoView({ behavior: 'smooth' })} />
+          <div ref={el => el?.scrollIntoView({ behavior: 'smooth' })} />
         </div>
       </div>
-
-
 
       {(status === 'FAILED' || (status === 'SUCCESS' && batchTotal > 1)) && (
         <div className="p-4 bg-white dark:bg-[#161920] border-t border-slate-200 dark:border-slate-800/50">
@@ -760,7 +937,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({ apiConfigs, 
             onClick={onBack}
             className="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg font-semibold transition-colors text-sm"
           >
-            {status === 'FAILED' ? '重置状态' : '返回编辑'}
+            {status === 'FAILED' ? '返回编辑' : '查看结果'}
           </button>
         </div>
       )}
