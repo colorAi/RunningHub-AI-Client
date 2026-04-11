@@ -12,7 +12,7 @@ import {
 import { ApiKeyEntry, AutoSaveConfig, DecodeConfig, InstanceType, NodeInfo, TaskOutput, WebAppInfo } from '../../types';
 import { fetchWorkflowTemplate, queryTaskResult, submitTask, uploadFile } from '../../services/api';
 import { connectTaskProgress } from '../../services/taskProgress';
-import { parseListOptions } from '../../utils/nodeUtils';
+import { getSwitchFieldConfig, parseListOptions } from '../../utils/nodeUtils';
 
 export interface AppNodeData {
   id: string;
@@ -295,7 +295,8 @@ const AppNode: React.FC<AppNodeProps> = ({
 
   const renderInput = (node: NodeInfo, index: number) => {
     const baseClass = 'w-full px-2 py-1 text-xs bg-white dark:bg-[#0F1115] border border-slate-300 dark:border-slate-600 rounded text-slate-700 dark:text-slate-300 focus:outline-none focus:border-brand-500';
-    const options = parseListOptions(node);
+    const switchConfig = getSwitchFieldConfig(node);
+    const options = switchConfig ? [] : parseListOptions(node);
     const helpText = node.description || node.descriptionEn;
 
     if (options.length > 0) {
@@ -343,6 +344,30 @@ const AppNode: React.FC<AppNodeProps> = ({
             />
           </label>
         </div>
+      );
+    }
+
+    if (switchConfig) {
+      return (
+        <button
+          type="button"
+          onClick={() => handleParamChange(index, switchConfig.checked ? switchConfig.uncheckedValue : switchConfig.checkedValue)}
+          className={`w-full px-2 py-1.5 rounded text-xs border transition-colors flex items-center justify-between ${
+            switchConfig.checked
+              ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500 dark:bg-brand-900/20 dark:text-brand-300'
+              : 'border-slate-300 bg-white text-slate-600 dark:border-slate-600 dark:bg-[#0F1115] dark:text-slate-300'
+          }`}
+          title={`${switchConfig.uncheckedLabel} / ${switchConfig.checkedLabel}`}
+        >
+          <span className="truncate">{switchConfig.checked ? switchConfig.checkedLabel : switchConfig.uncheckedLabel}</span>
+          <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+            switchConfig.checked ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-600'
+          }`}>
+            <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+              switchConfig.checked ? 'translate-x-4' : 'translate-x-0.5'
+            }`} />
+          </span>
+        </button>
       );
     }
 
@@ -479,17 +504,16 @@ const AppNode: React.FC<AppNodeProps> = ({
         <div className="px-3 py-2 max-h-64 overflow-y-auto">
           <div className="space-y-2">
             {data.nodes.map((node, index) => {
+              const label = node.description || node.nodeName || node.fieldName || `参数 ${index + 1}`;
               const helpText = node.description || node.descriptionEn;
+              const hasExtraHelp = !!helpText && helpText.trim() !== label.trim();
               return (
                 <div key={node._taskId || `${node.nodeId}-${index}`} className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium text-slate-600 dark:text-slate-400 truncate">
-                      {node.nodeName}
-                      {node.fieldName && node.fieldName !== node.nodeName && (
-                        <span className="text-slate-400 ml-1">({node.fieldName})</span>
-                      )}
+                    <label className="text-xs font-medium text-slate-600 dark:text-slate-300 truncate">
+                      {label}
                     </label>
-                    {helpText && (
+                    {hasExtraHelp && (
                       <button
                         onClick={() => setExpandedParams(prev => ({ ...prev, [index]: !prev[index] }))}
                         className="text-slate-400 hover:text-slate-600 shrink-0"
@@ -499,7 +523,7 @@ const AppNode: React.FC<AppNodeProps> = ({
                     )}
                   </div>
                   {renderInput(node, index)}
-                  {expandedParams[index] && helpText && (
+                  {expandedParams[index] && hasExtraHelp && (
                     <p className="text-xs text-slate-500 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 p-1.5 rounded">
                       {helpText}
                     </p>

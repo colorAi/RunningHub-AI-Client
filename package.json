@@ -1,7 +1,7 @@
 {
-  "name": "runninghub-ai-客户端1.6.1",
+  "name": "runninghub-ai-客户端1.6.2",
   "private": true,
-  "version": "1.6.1",
+  "version": "1.6.2",
   "type": "module",
   "scripts": {
     "dev": "vite",

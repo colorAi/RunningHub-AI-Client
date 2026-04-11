@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { Home, Briefcase, Settings, User, Layers, Sparkles } from 'lucide-react';
+import { Home, Briefcase, Settings, User, Layers } from 'lucide-react';
 import type { StepRunningRef } from './components/StepRunning';
 import SettingsModal from './components/SettingsModal';
 import DecodeSettingsModal from './components/DecodeSettingsModal';
@@ -16,7 +16,7 @@ const StepRunning = lazy(() => import('./components/StepRunning'));
 const WorkspacePanel = lazy(() => import('./components/WorkspacePanel'));
 const MultiTaskView = lazy(() => import('./components/MultiTaskView'));
 const ToolsView = lazy(() => import('./components/ToolsView'));
-const SkillsView = lazy(() => import('./components/SkillsView'));
+
 
 const STORAGE_KEY_API_KEYS = 'rh_api_keys_v2';
 const STORAGE_KEY_AUTOSAVE = 'rh_autosave_config';
@@ -27,7 +27,7 @@ const STORAGE_KEY_STARTUP_VIEW = 'rh_startup_view';
 const STORAGE_KEY_HOME_DEFAULT_TAB = 'rh_home_default_tab';
 const CONCURRENCY_OPTIONS = [1, 3, 5, 20] as const;
 
-type AppView = 'home' | 'workspace' | 'multitask' | 'skills' | 'tools';
+type AppView = 'home' | 'workspace' | 'multitask' | 'tools';
 type StartupView = Exclude<AppView, 'tools'>;
 
 const normalizeAutoSaveConfig = (config?: Partial<AutoSaveConfig> | null): AutoSaveConfig => ({
@@ -67,7 +67,7 @@ const normalizeApiKeys = (entries?: Partial<ApiKeyEntry>[] | null): ApiKeyEntry[
 };
 
 const normalizeStartupView = (value?: string | null): StartupView => {
-  if (value === 'workspace' || value === 'multitask' || value === 'skills') {
+  if (value === 'workspace' || value === 'multitask') {
     return value;
   }
 
@@ -442,7 +442,6 @@ function App() {
     { id: 'home', label: '首页', icon: Home },
     { id: 'workspace', label: '单任务模式', icon: Briefcase },
     { id: 'multitask', label: '多任务模式', icon: Layers },
-    { id: 'skills', label: 'Skills 模式', icon: Sparkles },
     { id: 'tools', label: '设置', icon: Settings },
   ];
 
@@ -452,7 +451,7 @@ function App() {
       <header className="bg-white dark:bg-[#0F1115] border-b border-slate-200 dark:border-slate-800/50 h-14 flex items-center justify-between pr-4 shrink-0 z-20 shadow-sm">
         <div className="flex items-center h-full gap-3">
           <img src="/r.png" alt="RunningHub" className="h-10 w-auto ml-2" />
-          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.6.1</span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.6.2</span>
           <button
             onClick={handleOpenAbout}
             className="ml-2 px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"
@@ -478,11 +477,6 @@ function App() {
                 >
                   <Icon className="w-4 h-4" />
                   <span className="text-sm">{tab.label}</span>
-                  {tab.id === 'skills' && (
-                    <span className="absolute -top-1 -right-0.5 px-1 py-0.5 text-[8px] font-bold text-white bg-gradient-to-r from-amber-500 to-orange-500 rounded-full leading-none shadow-sm border border-white dark:border-slate-900 transform scale-90 select-none">
-                      开发中
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -529,15 +523,6 @@ function App() {
                 onUpdateStartupView={handleUpdateStartupView}
                 homeDefaultTab={homeDefaultTab}
                 onUpdateHomeDefaultTab={handleUpdateHomeDefaultTab}
-              />
-            )}
-          </div>
-
-          <div className={`flex-1 overflow-hidden ${currentView === 'skills' ? 'flex' : 'hidden'}`}>
-            {currentView === 'skills' && (
-              <SkillsView
-                apiKeys={apiKeys}
-                autoSaveConfig={autoSaveConfig}
               />
             )}
           </div>

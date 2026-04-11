@@ -10,6 +10,11 @@
 
 ## 📅 Changelog
 
+> **📢 Project Status**: Due to time, energy, and other factors, this project is now **concluded**. There should be no serious bugs at this point. Hope you enjoy using it! Farewell, until we meet again! 🙏
+
+### v1.6.2
+- **🔧 Bug Fixes**: Fixed some known issues.
+
 ### v1.6.1
 - **🔧 Bug Fixes**: Fixed some known issues.
 
@@ -117,6 +122,11 @@ RunningHub AI Client is a modern desktop application built with React and Vite, 
 - **注册福利**: [国内点击注册送1000RH币](https://www.runninghub.cn/?inviteCode=rh-v1123) ,[海外点击注册送1000RH币](https://www.runninghub.ai/?inviteCode=rh-v1123)
 
 ## 📅 更新日志 (Changelog)
+
+> **📢 项目声明**: 由于时间精力等各方面原因，该项目暂且**告一段落**。目前应该没有什么严重bug了，希望大家用的开心。**有缘再见！** 🙏
+
+### v1.6.2
+- **🔧 问题修复**: 修复一些已知问题。
 
 ### v1.6.1
 - **🔧 问题修复**: 修复一些已知问题。

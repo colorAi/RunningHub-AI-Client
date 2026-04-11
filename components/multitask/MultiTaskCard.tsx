@@ -253,7 +253,7 @@ const MultiTaskCard: React.FC<MultiTaskCardProps> = ({
   };
 
   return (
-    <div className="relative flex min-h-[980px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#161920]">
+    <div className="relative flex h-[calc(100vh-120px)] min-h-[600px] max-h-[900px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#161920]">
       <div className="border-b border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/30">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -265,9 +265,6 @@ const MultiTaskCard: React.FC<MultiTaskCardProps> = ({
                 {statusMeta.label}
               </span>
             </div>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              {'\u5361\u7247 ID'}: {card.id.slice(0, 8)} | {'\u5e94\u7528 ID'}: {card.webappId || '\u672a\u8bbe\u7f6e'}
-            </p>
           </div>
 
           <div className="flex items-center gap-1">
@@ -320,12 +317,6 @@ const MultiTaskCard: React.FC<MultiTaskCardProps> = ({
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{card.loadError}</span>
           </div>
-        )}
-
-        {card.webAppInfo?.description && (
-          <p className="mt-3 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            {card.webAppInfo.description}
-          </p>
         )}
       </div>
 

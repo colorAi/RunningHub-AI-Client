@@ -3,7 +3,7 @@ export interface NodeInfo {
   nodeName: string;
   fieldName: string;
   fieldValue: string;
-  fieldType: 'IMAGE' | 'AUDIO' | 'VIDEO' | 'STRING' | 'INT' | 'FLOAT' | 'LIST' | 'SWITCH';
+  fieldType: 'IMAGE' | 'AUDIO' | 'VIDEO' | 'STRING' | 'INT' | 'FLOAT' | 'LIST' | 'SWITCH' | 'BOOLEAN';
   description?: string;
   descriptionEn?: string;
   fieldData?: string | Record<string, any> | any[];
@@ -158,71 +158,3 @@ export interface FailedTaskInfo {
 }
 
 export type InstanceType = 'default' | 'plus';
-
-export type SkillOutputType = 'image' | 'video' | 'audio' | '3d' | 'string';
-
-export type SkillParamType =
-  | 'IMAGE'
-  | 'VIDEO'
-  | 'AUDIO'
-  | 'STRING'
-  | 'INT'
-  | 'FLOAT'
-  | 'LIST'
-  | 'BOOLEAN';
-
-export interface SkillParamDefinition {
-  key: string;
-  type: SkillParamType;
-  required?: boolean;
-  default?: string | number | boolean;
-  min?: number;
-  max?: number;
-  options?: string[];
-  tags?: string[];
-  multiple?: boolean;
-  maxCount?: number;
-  maxSizeMB?: number;
-}
-
-export interface SkillCapability {
-  endpoint: string;
-  name_cn: string;
-  name_en: string;
-  task: string;
-  output_type: SkillOutputType;
-  category: string;
-  popularity: number;
-  tags: string[];
-  params: SkillParamDefinition[];
-}
-
-export interface SkillCatalog {
-  version: string;
-  total: number;
-  endpoints: SkillCapability[];
-}
-
-export interface SkillRunOutput {
-  kind: 'file' | 'text';
-  fileUrl?: string;
-  fileType?: string;
-  downloadUrl?: string;
-  text?: string;
-}
-
-export interface SkillRunUsage {
-  thirdPartyConsumeMoney: string;
-  consumeMoney: string;
-  consumeCoins: string;
-  taskCostTime: string;
-}
-
-export interface SkillTaskResult {
-  taskId: string;
-  status: TaskRuntimeStatus;
-  errorCode: string | null;
-  errorMessage: string | null;
-  outputs: SkillRunOutput[];
-  usage?: SkillRunUsage;
-}

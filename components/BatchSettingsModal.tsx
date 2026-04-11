@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useId } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { NodeInfo, PendingFilesMap } from '../types';
-import { parseListOptions } from '../utils/nodeUtils';
-import { X, Plus, Trash2, Save, Copy, AlertCircle, UploadCloud, Loader2, FileAudio, FileVideo, FileImage, FileText, FolderOpen, RefreshCw } from 'lucide-react';
+import { getSwitchFieldConfig, parseListOptions } from '../utils/nodeUtils';
+import { X, Plus, Trash2, Save, Copy, AlertCircle, UploadCloud, Loader2, FileAudio, FileVideo, FileImage, FileText, FolderOpen, Images, RefreshCw } from 'lucide-react';
 import { uploadFile } from '../services/api';
 
 interface BatchSettingsModalProps {
@@ -10,6 +10,7 @@ interface BatchSettingsModalProps {
     nodes: NodeInfo[];
     onSave: (batchList: NodeInfo[][], pendingFiles: PendingFilesMap, taskName: string) => void;
     initialBatchList: NodeInfo[][];
+    initialPendingFiles?: PendingFilesMap;
     initialTaskName?: string;
     apiKey: string;
     failedIndices?: Set<number>;  // 失败任务的索引集合
@@ -22,6 +23,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     nodes,
     onSave,
     initialBatchList,
+    initialPendingFiles = {},
     initialTaskName = '',
     apiKey,
     failedIndices = new Set(),
@@ -35,8 +37,30 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
     const [pendingFiles, setPendingFiles] = useState<PendingFilesMap>({});
     const [selectedImageNodeId, setSelectedImageNodeId] = useState<string>('');
+    const [selectedAudioNodeId, setSelectedAudioNodeId] = useState<string>('');
     const [selectedVideoNodeId, setSelectedVideoNodeId] = useState<string>('');
     const [selectedTextNodeId, setSelectedTextNodeId] = useState<string>('');
+    const localPreviewsRef = useRef<Record<string, string>>({});
+
+    const revokePreviewMap = (previewMap: Record<string, string>) => {
+        Object.values(previewMap).forEach((url: string) => URL.revokeObjectURL(url));
+    };
+
+    const buildPreviewMapFromPendingFiles = (files: PendingFilesMap) => {
+        const previews: Record<string, string> = {};
+
+        Object.entries(files).forEach(([key, file]) => {
+            if (file?.type?.startsWith('image/')) {
+                previews[key] = URL.createObjectURL(file);
+            }
+        });
+
+        return previews;
+    };
+
+    useEffect(() => {
+        localPreviewsRef.current = localPreviews;
+    }, [localPreviews]);
 
     useEffect(() => {
         if (isOpen && nodes && nodes.length > 0) {
@@ -60,9 +84,14 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 const newRow = JSON.parse(JSON.stringify(nodes)).map(node => ({ ...node, _taskId: taskId }));
                 setBatchList([newRow]);
             }
+            setPendingFiles({ ...initialPendingFiles });
+            setLocalPreviews(prev => {
+                revokePreviewMap(prev);
+                return buildPreviewMapFromPendingFiles(initialPendingFiles);
+            });
             setTaskName(initialTaskName);
         }
-    }, [isOpen, initialBatchList, initialTaskName, nodes]);
+    }, [initialBatchList, initialPendingFiles, initialTaskName, isOpen, nodes]);
 
     // Sync fieldData from nodes to batchList when nodes are updated (e.g., dropdown options fetched)
     // This ensures batch settings have access to the latest dropdown options
@@ -117,7 +146,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     // Cleanup previews
     useEffect(() => {
         return () => {
-            Object.values(localPreviews).forEach((url: string) => URL.revokeObjectURL(url));
+            revokePreviewMap(localPreviewsRef.current);
         };
     }, []);
 
@@ -146,6 +175,25 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
             setSelectedImageNodeId(`${imageNodes[0].nodeId}|${imageNodes[0].fieldName || ''}`);
         } else {
             setSelectedImageNodeId('');
+        }
+    }, [nodes]);
+
+    // Initialize selected audio node - Reset when nodes change
+    useEffect(() => {
+        if (!nodes || nodes.length === 0) {
+            setSelectedAudioNodeId('');
+            return;
+        }
+        const audioNodes = nodes.filter(n =>
+            n.fieldType === 'AUDIO' ||
+            n.description === '音频' ||
+            n.fieldName === 'audio' ||
+            n.fieldName === 'audioUrl'
+        );
+        if (audioNodes.length > 0) {
+            setSelectedAudioNodeId(`${audioNodes[0].nodeId}|${audioNodes[0].fieldName || ''}`);
+        } else {
+            setSelectedAudioNodeId('');
         }
     }, [nodes]);
 
@@ -270,6 +318,14 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
         n.fieldName === 'image'
     );
 
+    // Get all AUDIO type nodes
+    const getAudioNodes = () => nodes.filter(n =>
+        n.fieldType === 'AUDIO' ||
+        n.description === '音频' ||
+        n.fieldName === 'audio' ||
+        n.fieldName === 'audioUrl'
+    );
+
     // Get all VIDEO type nodes (LoadVideo nodes)
     const getVideoNodes = () => nodes.filter(n =>
         n.fieldType === 'VIDEO' ||
@@ -280,6 +336,96 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     // Get all TEXT/STRING type nodes
     const getTextNodes = () => nodes.filter(n => n.fieldType === 'STRING');
 
+    const applyBatchImages = (imageFiles: { name: string; file: File }[], sourceLabel: string) => {
+        const imageNodes = getImageNodes();
+        if (imageNodes.length === 0) {
+            setToast({ type: 'error', message: '未找到图像加载节点（LoadImage）' });
+            return;
+        }
+
+        const targetKey = selectedImageNodeId || `${imageNodes[0].nodeId}|${imageNodes[0].fieldName || ''}`;
+        const [targetNodeId, targetFieldName] = targetKey.split('|');
+        const existingRows = batchList.length;
+
+        let finalBatchList: NodeInfo[][];
+        const newPendingFiles: PendingFilesMap = { ...pendingFiles };
+        const newPreviews: Record<string, string> = { ...localPreviews };
+
+        const findNodeIndex = (rowNodes: NodeInfo[]) => {
+            if (targetFieldName && targetFieldName !== '' && targetFieldName !== 'undefined') {
+                return rowNodes.findIndex(n => String(n.nodeId) === String(targetNodeId) && n.fieldName === targetFieldName);
+            }
+            return rowNodes.findIndex(n => String(n.nodeId) === String(targetNodeId));
+        };
+
+        if (existingRows > 0) {
+            finalBatchList = [...batchList];
+
+            imageFiles.forEach((imgFile, index) => {
+                let taskId;
+                if (index < existingRows) {
+                    const rowNodes = [...finalBatchList[index]];
+                    taskId = rowNodes[0]?._taskId;
+                    const nodeIndex = findNodeIndex(rowNodes);
+                    if (nodeIndex !== -1) {
+                        rowNodes[nodeIndex] = { ...rowNodes[nodeIndex], fieldValue: imgFile.name };
+                        finalBatchList[index] = rowNodes;
+                    }
+                } else {
+                    const newRowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                    taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                    newRowNodes.forEach(node => node._taskId = taskId);
+                    const nodeIndex = findNodeIndex(newRowNodes);
+                    if (nodeIndex !== -1) {
+                        newRowNodes[nodeIndex].fieldValue = imgFile.name;
+                    }
+                    finalBatchList.push(newRowNodes);
+                }
+
+                const fieldName = targetFieldName || (finalBatchList[index] && findNodeIndex(finalBatchList[index]) !== -1 ? finalBatchList[index][findNodeIndex(finalBatchList[index])].fieldName : 'image');
+                const key = `${taskId}|${targetNodeId}|${fieldName}`;
+                newPendingFiles[key] = imgFile.file;
+                newPreviews[key] = URL.createObjectURL(imgFile.file);
+            });
+        } else {
+            finalBatchList = [];
+            imageFiles.forEach((imgFile, index) => {
+                const rowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                const taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                rowNodes.forEach(node => node._taskId = taskId);
+                const nodeIndex = findNodeIndex(rowNodes);
+                let fieldName = 'image';
+                if (nodeIndex !== -1) {
+                    rowNodes[nodeIndex].fieldValue = imgFile.name;
+                    fieldName = rowNodes[nodeIndex].fieldName;
+                }
+                finalBatchList.push(rowNodes);
+
+                const key = `${taskId}|${targetNodeId}|${fieldName}`;
+                newPendingFiles[key] = imgFile.file;
+                newPreviews[key] = URL.createObjectURL(imgFile.file);
+            });
+        }
+
+        setBatchList(finalBatchList);
+        setPendingFiles(newPendingFiles);
+        setLocalPreviews(newPreviews);
+
+        console.log('[BatchImport] Summary:', {
+            sourceLabel,
+            targetKey,
+            targetNodeId,
+            targetFieldName,
+            imageFilesCount: imageFiles.length,
+            existingRows,
+            finalRows: finalBatchList.length,
+            pendingFilesKeys: Object.keys(newPendingFiles),
+            previewKeys: Object.keys(newPreviews)
+        });
+
+        setToast({ type: 'success', message: `成功从${sourceLabel}导入 ${imageFiles.length} 张图片到 ${existingRows > 0 ? '现有' : '新建'}任务！` });
+    };
+
     // Batch Image Import from folder
     const handleBatchImageImport = async () => {
         try {
@@ -289,13 +435,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 return;
             }
 
-            const targetKey = selectedImageNodeId || `${imageNodes[0].nodeId}|${imageNodes[0].fieldName || ''}`;
-            const [targetNodeId, targetFieldName] = targetKey.split('|');
-
-            // Use File System Access API to pick a directory
             const dirHandle = await (window as any).showDirectoryPicker();
-
-            // Collect all image files recursively
             const imageFiles: { name: string; file: File }[] = [];
             const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.jfif'];
 
@@ -322,104 +462,51 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 return;
             }
 
-            // Sort by filename
             imageFiles.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
-
-            // Smart merge logic: if batchList already has rows, update existing rows' target node
-            // instead of replacing everything
-            const existingRows = batchList.length;
-
-            let finalBatchList: NodeInfo[][];
-            const newPendingFiles: PendingFilesMap = { ...pendingFiles };  // Start with existing
-            const newPreviews: Record<string, string> = { ...localPreviews };  // Start with existing
-
-            const findNodeIndex = (rowNodes: NodeInfo[]) => {
-                // Try exact match with fieldName if available
-                if (targetFieldName && targetFieldName !== '' && targetFieldName !== 'undefined') {
-                    return rowNodes.findIndex(n => String(n.nodeId) === String(targetNodeId) && n.fieldName === targetFieldName);
-                }
-                // Fallback to just nodeId
-                return rowNodes.findIndex(n => String(n.nodeId) === String(targetNodeId));
-            };
-
-            if (existingRows > 0) {
-                // Update existing rows with new images for target node
-                finalBatchList = [...batchList];
-
-                imageFiles.forEach((imgFile, index) => {
-                    let taskId;
-                    if (index < existingRows) {
-                        // Update existing row
-                        const rowNodes = [...finalBatchList[index]];
-                        taskId = rowNodes[0]?._taskId;
-                        const nodeIndex = findNodeIndex(rowNodes);
-                        if (nodeIndex !== -1) {
-                            rowNodes[nodeIndex] = { ...rowNodes[nodeIndex], fieldValue: imgFile.name };
-                            finalBatchList[index] = rowNodes;
-                        }
-                    } else {
-                        // Add new row for extra images
-                        const newRowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
-                        // Generate unique ID for new row
-                        taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
-                        newRowNodes.forEach(node => node._taskId = taskId);
-                        const nodeIndex = findNodeIndex(newRowNodes);
-                        if (nodeIndex !== -1) {
-                            newRowNodes[nodeIndex].fieldValue = imgFile.name;
-                        }
-                        finalBatchList.push(newRowNodes);
-                    }
-
-                    // Store File reference and preview
-                    // Use taskId as key for proper cleanup on delete
-                    const fieldName = targetFieldName || (finalBatchList[index] && findNodeIndex(finalBatchList[index]) !== -1 ? finalBatchList[index][findNodeIndex(finalBatchList[index])].fieldName : 'image');
-                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
-                    newPendingFiles[key] = imgFile.file;
-                    newPreviews[key] = URL.createObjectURL(imgFile.file);
-                });
-            } else {
-                // No existing rows, create new ones
-                finalBatchList = [];
-                imageFiles.forEach((imgFile, index) => {
-                    const rowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
-                    // Generate unique ID for new row
-                    const taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
-                    rowNodes.forEach(node => node._taskId = taskId);
-                    const nodeIndex = findNodeIndex(rowNodes);
-                    let fieldName = 'image';
-                    if (nodeIndex !== -1) {
-                        rowNodes[nodeIndex].fieldValue = imgFile.name;
-                        fieldName = rowNodes[nodeIndex].fieldName;
-                    }
-                    finalBatchList.push(rowNodes);
-
-                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
-                    newPendingFiles[key] = imgFile.file;
-                    newPreviews[key] = URL.createObjectURL(imgFile.file);
-                });
-            }
-
-            setBatchList(finalBatchList);
-            setPendingFiles(newPendingFiles);
-            setLocalPreviews(newPreviews);
-
-            console.log('[BatchImport] Summary:', {
-                targetKey,
-                targetNodeId,
-                targetFieldName,
-                imageFilesCount: imageFiles.length,
-                existingRows,
-                finalRows: finalBatchList.length,
-                pendingFilesKeys: Object.keys(newPendingFiles),
-                previewKeys: Object.keys(newPreviews)
-            });
-
-            setToast({ type: 'success', message: `成功导入 ${imageFiles.length} 张图片到 ${existingRows > 0 ? '现有' : '新建'}任务！` });
-
+            applyBatchImages(imageFiles, '文件夹');
         } catch (e: any) {
             if (e.name !== 'AbortError') {
                 console.error('Failed to import images:', e);
                 setToast({ type: 'error', message: '导入图片失败: ' + e.message });
+            }
+        }
+    };
+
+    // Batch Image Import from selected files, preserving selection order
+    const handleBatchImageFileSelect = async () => {
+        try {
+            const imageNodes = getImageNodes();
+            if (imageNodes.length === 0) {
+                setToast({ type: 'error', message: '未找到图像加载节点（LoadImage）' });
+                return;
+            }
+
+            const fileHandles = await (window as any).showOpenFilePicker({
+                types: [{
+                    description: 'Image Files',
+                    accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.jfif'] }
+                }],
+                multiple: true,
+                excludeAcceptAllOption: false,
+            });
+
+            const imageFiles = await Promise.all(
+                fileHandles.map(async (handle: any) => {
+                    const file = await handle.getFile();
+                    return { name: file.name, file };
+                })
+            );
+
+            if (imageFiles.length === 0) {
+                setToast({ type: 'error', message: '未选择图片文件' });
+                return;
+            }
+
+            applyBatchImages(imageFiles, '所选文件');
+        } catch (e: any) {
+            if (e.name !== 'AbortError') {
+                console.error('Failed to select images:', e);
+                setToast({ type: 'error', message: '选择图片失败: ' + e.message });
             }
         }
     };
@@ -564,12 +651,138 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
     // Handle close without save - clear all cached data
     const handleClose = () => {
         // Revoke all local preview URLs to prevent memory leaks
-        Object.values(localPreviews).forEach((url: string) => URL.revokeObjectURL(url));
+        revokePreviewMap(localPreviews);
         // Reset to initial state
         setBatchList(initialBatchList.length > 0 ? initialBatchList : []);
-        setPendingFiles({});
+        setPendingFiles({ ...initialPendingFiles });
         setLocalPreviews({});
         onClose();
+    };
+
+    // Batch Audio Import from folder
+    const handleBatchAudioImport = async () => {
+        try {
+            const audioNodes = getAudioNodes();
+            if (audioNodes.length === 0) {
+                setToast({ type: 'error', message: '未找到音频加载节点' });
+                return;
+            }
+
+            const targetKey = selectedAudioNodeId || `${audioNodes[0].nodeId}|${audioNodes[0].fieldName || ''}`;
+            const [targetNodeId, targetFieldName] = targetKey.split('|');
+
+            const dirHandle = await (window as any).showDirectoryPicker();
+
+            const audioFiles: { name: string; file: File }[] = [];
+            const audioExtensions = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma'];
+
+            const getFilesRecursively = async (entry: any) => {
+                if (entry.kind === 'file') {
+                    const name = entry.name.toLowerCase();
+                    if (audioExtensions.some(ext => name.endsWith(ext))) {
+                        const file = await entry.getFile();
+                        audioFiles.push({ name: entry.name, file });
+                    }
+                } else if (entry.kind === 'directory') {
+                    for await (const handle of entry.values()) {
+                        await getFilesRecursively(handle);
+                    }
+                }
+            };
+
+            for await (const entry of dirHandle.values()) {
+                await getFilesRecursively(entry);
+            }
+
+            if (audioFiles.length === 0) {
+                setToast({ type: 'error', message: '文件夹中没有找到音频文件' });
+                return;
+            }
+
+            audioFiles.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+
+            const existingRows = batchList.length;
+
+            let finalBatchList: NodeInfo[][];
+            const newPendingFiles: PendingFilesMap = { ...pendingFiles };
+            const newPreviews: Record<string, string> = { ...localPreviews };
+
+            const findNodeIndex = (rowNodes: NodeInfo[]) => {
+                if (targetFieldName && targetFieldName !== '' && targetFieldName !== 'undefined') {
+                    return rowNodes.findIndex(n => String(n.nodeId) === String(targetNodeId) && n.fieldName === targetFieldName);
+                }
+                return rowNodes.findIndex(n => String(n.nodeId) === String(targetNodeId));
+            };
+
+            if (existingRows > 0) {
+                finalBatchList = [...batchList];
+
+                audioFiles.forEach((audioFile, index) => {
+                    let taskId;
+                    if (index < existingRows) {
+                        const rowNodes = [...finalBatchList[index]];
+                        taskId = rowNodes[0]?._taskId;
+                        const nodeIndex = findNodeIndex(rowNodes);
+                        if (nodeIndex !== -1) {
+                            rowNodes[nodeIndex] = { ...rowNodes[nodeIndex], fieldValue: audioFile.name };
+                            finalBatchList[index] = rowNodes;
+                        }
+                    } else {
+                        const newRowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                        taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                        newRowNodes.forEach(node => node._taskId = taskId);
+                        const nodeIndex = findNodeIndex(newRowNodes);
+                        if (nodeIndex !== -1) {
+                            newRowNodes[nodeIndex].fieldValue = audioFile.name;
+                        }
+                        finalBatchList.push(newRowNodes);
+                    }
+
+                    const fieldName = targetFieldName || (finalBatchList[index] && findNodeIndex(finalBatchList[index]) !== -1 ? finalBatchList[index][findNodeIndex(finalBatchList[index])].fieldName : 'audio');
+                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
+                    newPendingFiles[key] = audioFile.file;
+                });
+            } else {
+                finalBatchList = [];
+                audioFiles.forEach((audioFile, index) => {
+                    const rowNodes: NodeInfo[] = JSON.parse(JSON.stringify(nodes));
+                    const taskId = `task-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+                    rowNodes.forEach(node => node._taskId = taskId);
+                    const nodeIndex = findNodeIndex(rowNodes);
+                    let fieldName = 'audio';
+                    if (nodeIndex !== -1) {
+                        rowNodes[nodeIndex].fieldValue = audioFile.name;
+                        fieldName = rowNodes[nodeIndex].fieldName;
+                    }
+                    finalBatchList.push(rowNodes);
+
+                    const key = `${taskId}|${targetNodeId}|${fieldName}`;
+                    newPendingFiles[key] = audioFile.file;
+                });
+            }
+
+            setBatchList(finalBatchList);
+            setPendingFiles(newPendingFiles);
+            setLocalPreviews(newPreviews);
+
+            console.log('[BatchAudioImport] Summary:', {
+                targetKey,
+                targetNodeId,
+                targetFieldName,
+                audioFilesCount: audioFiles.length,
+                existingRows,
+                finalRows: finalBatchList.length,
+                pendingFilesKeys: Object.keys(newPendingFiles)
+            });
+
+            setToast({ type: 'success', message: `成功导入 ${audioFiles.length} 个音频到 ${existingRows > 0 ? '现有' : '新建'}任务！` });
+
+        } catch (e: any) {
+            if (e.name !== 'AbortError') {
+                console.error('Failed to import audio:', e);
+                setToast({ type: 'error', message: '导入音频失败: ' + e.message });
+            }
+        }
     };
 
     // Document List Mode: Import prompts from TXT file
@@ -776,8 +989,32 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
             );
         }
 
+        const switchConfig = getSwitchFieldConfig(node);
+        if (switchConfig) {
+            return (
+                <button
+                    type="button"
+                    onClick={() => handleChange(switchConfig.checked ? switchConfig.uncheckedValue : switchConfig.checkedValue)}
+                    className={`w-[140px] h-[36px] px-3 rounded-lg border text-xs transition-all flex items-center justify-between ${
+                        switchConfig.checked
+                            ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500 dark:bg-brand-900/20 dark:text-brand-300'
+                            : 'border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-[#0F1115] dark:text-slate-300'
+                    }`}
+                    title={`${switchConfig.uncheckedLabel} / ${switchConfig.checkedLabel}`}
+                >
+                    <span className="truncate">{switchConfig.checked ? switchConfig.checkedLabel : switchConfig.uncheckedLabel}</span>
+                    <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                        switchConfig.checked ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-600'
+                    }`}>
+                        <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                            switchConfig.checked ? 'translate-x-4' : 'translate-x-0.5'
+                        }`} />
+                    </span>
+                </button>
+            );
+        }
+
         // 4. List / Select - Auto-detect based on fieldData availability
-        // This handles LIST, SWITCH with fieldData (ImpactSwitch), and select fields
         const options = parseListOptions(node);
         if (options.length > 0) {
             return (
@@ -820,9 +1057,92 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
         });
     };
 
+    const renderBatchActionGroup = ({
+        nodes,
+        value,
+        onChange,
+        title,
+        actionTitle,
+        actionLabel,
+        actionIcon,
+        actionClassName,
+        onAction,
+        fallbackLabel,
+        secondaryActionLabel,
+        secondaryActionTitle,
+        secondaryActionIcon,
+        secondaryActionClassName,
+        onSecondaryAction,
+        horizontalActions,
+    }: {
+        nodes: NodeInfo[];
+        value: string;
+        onChange: (value: string) => void;
+        title: string;
+        actionTitle: string;
+        actionLabel: string;
+        actionIcon: React.ReactNode;
+        actionClassName: string;
+        onAction: () => void;
+        fallbackLabel: string;
+        secondaryActionLabel?: string;
+        secondaryActionTitle?: string;
+        secondaryActionIcon?: React.ReactNode;
+        secondaryActionClassName?: string;
+        onSecondaryAction?: () => void;
+        horizontalActions?: boolean;
+    }) => {
+        if (nodes.length === 0) return null;
+
+        return (
+            <div className="flex w-[188px] shrink-0 flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-700 dark:bg-[#0F1115]">
+                <div className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">目标节点</span>
+                    <select
+                        value={value}
+                        onChange={(e) => onChange(e.target.value)}
+                        disabled={nodes.length === 1}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        title={title}
+                    >
+                        {nodes.map(node => (
+                            <option
+                                key={`${node.nodeId}|${node.fieldName || ''}`}
+                                value={`${node.nodeId}|${node.fieldName || ''}`}
+                                className="bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                            >
+                                {node.nodeName || node.fieldName || fallbackLabel} (#{node.nodeId})
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                <div className={`flex gap-1.5 ${horizontalActions ? 'flex-row' : 'flex-col'}`}>
+                    <button
+                        onClick={onAction}
+                        className={`flex h-9 items-center justify-center rounded-lg border font-medium transition-colors ${onSecondaryAction && horizontalActions ? 'flex-1 min-w-0 gap-1 px-2 text-xs whitespace-nowrap' : 'gap-2 px-3 text-sm'} ${actionClassName}`}
+                        title={actionTitle}
+                    >
+                        {actionIcon}
+                        <span className="truncate">{actionLabel}</span>
+                    </button>
+                    {onSecondaryAction && secondaryActionLabel && secondaryActionTitle && secondaryActionClassName && (
+                        <button
+                            onClick={onSecondaryAction}
+                            className={`flex h-9 items-center justify-center rounded-lg border font-medium transition-colors ${horizontalActions ? 'flex-1 min-w-0 gap-1 px-2 text-xs whitespace-nowrap' : 'gap-2 px-3 text-sm'} ${secondaryActionClassName}`}
+                            title={secondaryActionTitle}
+                        >
+                            {secondaryActionIcon}
+                            <span className="truncate">{secondaryActionLabel}</span>
+                        </button>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white dark:bg-[#161920] rounded-xl shadow-2xl w-[95vw] h-[85vh] flex flex-col border border-slate-200 dark:border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 md:p-3">
+            <div className="bg-white dark:bg-[#161920] rounded-xl shadow-2xl w-[98vw] h-[92vh] max-w-[1800px] flex flex-col border border-slate-200 dark:border-slate-800">
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
                     <div>
@@ -891,9 +1211,11 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                                             <div className="flex gap-3 min-w-max items-start">
                                                 {rowNodes.map((node, nodeIdx) => (
                                                     <div key={`${batchIndex}-${node.nodeId}-${node.fieldName || nodeIdx}`} className="flex flex-col gap-1.5 w-auto">
-                                                        <label className="text-[10px] font-medium text-slate-500 dark:text-slate-400 truncate max-w-[120px] flex items-center gap-1" title={node.nodeName}>
-                                                            <span>{node.nodeName || node.fieldName}</span>
-                                                            <span className="opacity-70 font-mono">#{node.nodeId}</span>
+                                                        <label
+                                                            className="text-[11px] font-medium text-slate-600 dark:text-slate-300 truncate max-w-[140px]"
+                                                            title={node.description || node.nodeName || node.fieldName}
+                                                        >
+                                                            {node.description || node.nodeName || node.fieldName || `参数 ${nodeIdx + 1}`}
                                                         </label>
                                                         {renderBatchInput(node, batchIndex)}
                                                     </div>
@@ -908,145 +1230,101 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 </div>
 
                 {/* Footer */}
-                <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-[#161920] shrink-0">
-                    <div className="flex gap-2">
-                        <button
-                            onClick={handleAddRow}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 hover:bg-brand-100 dark:hover:bg-brand-900/40 rounded-lg transition-colors border border-brand-200 dark:border-brand-800/50"
-                        >
-                            <Plus className="w-4 h-4" />
-                            添加配置
-                        </button>
-                        {/* Text Node Selector - Show if text nodes exist */}
-                        {getTextNodes().length > 0 && (
-                            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#0F1115] border border-slate-300 dark:border-slate-700 rounded-lg px-2">
-                                <span className="text-xs text-slate-500 whitespace-nowrap">目标:</span>
-                                <select
-                                    value={selectedTextNodeId}
-                                    onChange={(e) => setSelectedTextNodeId(e.target.value)}
-                                    disabled={getTextNodes().length === 1}
-                                    className="py-2 text-sm bg-transparent outline-none disabled:opacity-70 disabled:cursor-not-allowed max-w-[140px] text-slate-700 dark:text-slate-200"
-                                    title="选择批量导入文本的目标节点"
-                                >
-                                    {getTextNodes().map(node => (
-                                        <option
-                                            key={`${node.nodeId}|${node.fieldName || ''}`}
-                                            value={`${node.nodeId}|${node.fieldName || ''}`}
-                                            className="bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
-                                        >
-                                            {node.nodeName || node.fieldName || 'Text'} (#{node.nodeId})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
-                        <button
-                            onClick={handleDocumentListMode}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-lg transition-colors border border-emerald-200 dark:border-emerald-800/50"
-                            title="从TXT文件导入提示词，每行为一个任务"
-                        >
-                            <FileText className="w-4 h-4" />
-                            导入文档
-                        </button>
-                        {/* Batch Image Import */}
-                        {/* Batch Image Import Selector - Always show if image nodes exist */}
-                        {getImageNodes().length > 0 && (
-                            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#0F1115] border border-slate-300 dark:border-slate-700 rounded-lg px-2">
-                                <span className="text-xs text-slate-500 whitespace-nowrap">目标:</span>
-                                <select
-                                    value={selectedImageNodeId}
-                                    onChange={(e) => setSelectedImageNodeId(e.target.value)}
-                                    disabled={getImageNodes().length === 1}
-                                    className="py-2 text-sm bg-transparent outline-none disabled:opacity-70 disabled:cursor-not-allowed max-w-[140px] text-slate-700 dark:text-slate-200"
-                                    title="选择批量传图的目标节点"
-                                >
-                                    {getImageNodes().map(node => (
-                                        <option
-                                            key={`${node.nodeId}|${node.fieldName || ''}`}
-                                            value={`${node.nodeId}|${node.fieldName || ''}`}
-                                            className="bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
-                                        >
-                                            {node.nodeName || node.fieldName || 'Image'} (#{node.nodeId})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
-                        <button
-                            onClick={handleBatchImageImport}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-lg transition-colors border border-blue-200 dark:border-blue-800/50"
-                            title="从文件夹批量导入图片"
-                        >
-                            <FolderOpen className="w-4 h-4" />
-                            批量传图
-                        </button>
-                        {/* Batch Video Import Selector - Always show if video nodes exist */}
-                        {getVideoNodes().length > 0 && (
-                            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#0F1115] border border-slate-300 dark:border-slate-700 rounded-lg px-2">
-                                <span className="text-xs text-slate-500 whitespace-nowrap">目标:</span>
-                                <select
-                                    value={selectedVideoNodeId}
-                                    onChange={(e) => setSelectedVideoNodeId(e.target.value)}
-                                    disabled={getVideoNodes().length === 1}
-                                    className="py-2 text-sm bg-transparent outline-none disabled:opacity-70 disabled:cursor-not-allowed max-w-[140px] text-slate-700 dark:text-slate-200"
-                                    title="选择批量传视频的目标节点"
-                                >
-                                    {getVideoNodes().map(node => (
-                                        <option
-                                            key={`${node.nodeId}|${node.fieldName || ''}`}
-                                            value={`${node.nodeId}|${node.fieldName || ''}`}
-                                            className="bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
-                                        >
-                                            {node.nodeName || node.fieldName || 'Video'} (#{node.nodeId})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
-                        <button
-                            onClick={handleBatchVideoImport}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded-lg transition-colors border border-purple-200 dark:border-purple-800/50"
-                            title="从文件夹批量导入视频"
-                        >
-                            <FolderOpen className="w-4 h-4" />
-                            批量传视频
-                        </button>
-                        <button
-                            onClick={() => {
-                                setBatchList([]);
-                                setPendingFiles({});
-                                setLocalPreviews({});  // Also clear previews
-                            }}
-                            disabled={batchList.length === 0}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-lg transition-colors border border-red-200 dark:border-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="清空所有配置"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                            清空
-                        </button>
+                <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-between items-start gap-4 bg-white dark:bg-[#161920] shrink-0">
+                    <div className="flex flex-wrap items-start gap-2">
+                        <div className="flex w-[120px] shrink-0 flex-col gap-2">
+                            <button
+                                onClick={handleAddRow}
+                                className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 hover:bg-brand-100 dark:hover:bg-brand-900/40 rounded-lg transition-colors border border-brand-200 dark:border-brand-800/50"
+                            >
+                                <Plus className="w-4 h-4" />
+                                添加配置
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setBatchList([]);
+                                    setPendingFiles({});
+                                    setLocalPreviews({});  // Also clear previews
+                                }}
+                                disabled={batchList.length === 0}
+                                className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-lg transition-colors border border-red-200 dark:border-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="清空所有配置"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                                清空
+                            </button>
+                        </div>
+                        {renderBatchActionGroup({
+                            nodes: getTextNodes(),
+                            value: selectedTextNodeId,
+                            onChange: setSelectedTextNodeId,
+                            title: '选择批量导入文本的目标节点',
+                            actionTitle: '从TXT文件导入提示词，每行为一个任务',
+                            actionLabel: '导入文档',
+                            actionIcon: <FileText className="w-4 h-4" />,
+                            actionClassName: 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800/50',
+                            onAction: handleDocumentListMode,
+                            fallbackLabel: 'Text',
+                        })}
+                        {renderBatchActionGroup({
+                            nodes: getImageNodes(),
+                            value: selectedImageNodeId,
+                            onChange: setSelectedImageNodeId,
+                            title: '选择批量传图的目标节点',
+                            actionTitle: '从文件夹批量导入图片',
+                            actionLabel: '文件夹',
+                            actionIcon: <FolderOpen className="w-4 h-4" />,
+                            actionClassName: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 border-blue-200 dark:border-blue-800/50',
+                            onAction: handleBatchImageImport,
+                            fallbackLabel: 'Image',
+                            secondaryActionLabel: '多选',
+                            secondaryActionTitle: '按选择顺序批量导入图片',
+                            secondaryActionIcon: <Images className="w-4 h-4" />,
+                            secondaryActionClassName: 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/20 hover:bg-sky-100 dark:hover:bg-sky-900/40 border-sky-200 dark:border-sky-800/50',
+                            onSecondaryAction: handleBatchImageFileSelect,
+                            horizontalActions: true,
+                        })}
+                        {renderBatchActionGroup({
+                            nodes: getAudioNodes(),
+                            value: selectedAudioNodeId,
+                            onChange: setSelectedAudioNodeId,
+                            title: '选择批量传音频的目标节点',
+                            actionTitle: '从文件夹批量导入音频',
+                            actionLabel: '批量传音频',
+                            actionIcon: <FileAudio className="w-4 h-4" />,
+                            actionClassName: 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40 border-amber-200 dark:border-amber-800/50',
+                            onAction: handleBatchAudioImport,
+                            fallbackLabel: 'Audio',
+                        })}
+                        {renderBatchActionGroup({
+                            nodes: getVideoNodes(),
+                            value: selectedVideoNodeId,
+                            onChange: setSelectedVideoNodeId,
+                            title: '选择批量传视频的目标节点',
+                            actionTitle: '从文件夹批量导入视频',
+                            actionLabel: '批量传视频',
+                            actionIcon: <FolderOpen className="w-4 h-4" />,
+                            actionClassName: 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 border-purple-200 dark:border-purple-800/50',
+                            onAction: handleBatchVideoImport,
+                            fallbackLabel: 'Video',
+                        })}
                     </div>
 
-                    <div className="flex gap-3 items-center">
-                        <div className="flex items-center gap-2 mr-2">
-                            <span className="text-sm font-medium text-slate-600 dark:text-slate-300">任务名:</span>
+                    <div className="flex w-[180px] shrink-0 flex-col items-stretch gap-2">
+                        <div className="flex flex-col gap-1">
+                            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">任务名</span>
                             <input
                                 type="text"
                                 value={taskName}
                                 onChange={(e) => setTaskName(e.target.value)}
                                 placeholder="ABC"
-                                className="w-32 px-3 py-2 text-sm bg-slate-50 dark:bg-[#0F1115] border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-brand-500 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400"
+                                className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-[#0F1115] border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-brand-500 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400"
                                 title="设置文件名后缀，例如：ABC_Task_001.png"
                             />
                         </div>
                         <button
-                            onClick={handleClose}
-                            className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-                        >
-                            取消
-                        </button>
-                        <button
                             onClick={handleSave}
-                            className="flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-600 rounded-lg shadow-sm transition-colors"
+                            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-600 rounded-lg shadow-sm transition-colors"
                         >
                             <Save className="w-4 h-4" />
                             保存设置 ({batchList.length})

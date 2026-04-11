@@ -82,17 +82,39 @@ const normalizeCover = (cover: any) => ({
   uri: cover?.uri || cover?.url || cover?.fileUri || cover?.thumbnailUri || '',
 });
 
-const normalizeNodeInfo = (node: any): NodeInfo => ({
-  ...node,
-  nodeId: String(node?.nodeId ?? ''),
-  nodeName: node?.nodeName || '',
-  fieldName: node?.fieldName || '',
-  fieldValue: node?.fieldValue == null ? '' : String(node.fieldValue),
-  fieldType: node?.fieldType || 'STRING',
-  description: node?.description || node?.desc || '',
-  descriptionEn: node?.descriptionEn || node?.description_en || undefined,
-  fieldData: node?.fieldData ?? node?.field_data ?? node?.options ?? undefined,
-});
+const normalizeNodeInfo = (node: any): NodeInfo => {
+  const rawFieldType = String(node?.fieldType || 'STRING').toUpperCase();
+  let fieldType: NodeInfo['fieldType'];
+
+  switch (rawFieldType) {
+    case 'IMAGE':
+    case 'AUDIO':
+    case 'VIDEO':
+    case 'STRING':
+    case 'INT':
+    case 'FLOAT':
+    case 'LIST':
+    case 'SWITCH':
+    case 'BOOLEAN':
+      fieldType = rawFieldType as NodeInfo['fieldType'];
+      break;
+    default:
+      fieldType = 'STRING';
+      break;
+  }
+
+  return {
+    ...node,
+    nodeId: String(node?.nodeId ?? ''),
+    nodeName: node?.nodeName || '',
+    fieldName: node?.fieldName || '',
+    fieldValue: node?.fieldValue == null ? '' : String(node.fieldValue),
+    fieldType,
+    description: node?.description || node?.desc || '',
+    descriptionEn: node?.descriptionEn || node?.description_en || undefined,
+    fieldData: node?.fieldData ?? node?.field_data ?? node?.options ?? undefined,
+  };
+};
 
 const normalizeWebAppInfo = (data: any): WebAppInfo | null => {
   if (!data?.webappName) {

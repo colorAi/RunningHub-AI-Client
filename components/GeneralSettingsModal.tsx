@@ -27,7 +27,7 @@ const STARTUP_VIEW_OPTIONS: { value: StartupView; label: string; description: st
   { value: 'home', label: '首页', description: '启动后先看应用推荐和收藏入口' },
   { value: 'workspace', label: '单任务模式', description: '启动后直接进入单任务工作区' },
   { value: 'multitask', label: '多任务模式', description: '启动后直接进入多任务调度' },
-  { value: 'skills', label: 'Skills 模式 (开发中)', description: '启动后直接进入 skills 创作流程板' },
+  { value: 'skills', label: '短剧模式', description: '启动后直接进入短剧创作流程工作台' },
 ];
 
 const HOME_TAB_OPTIONS: { value: HomeDefaultTab; label: string; description: string }[] = [

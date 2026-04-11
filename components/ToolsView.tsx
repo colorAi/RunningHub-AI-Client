@@ -22,7 +22,7 @@ const STARTUP_VIEW_LABELS: Record<StartupView, string> = {
   home: '首页',
   workspace: '单任务模式',
   multitask: '多任务模式',
-  skills: 'Skills 模式 (开发中)',
+  skills: '短剧模式',
 };
 
 const HOME_TAB_LABELS: Record<HomeDefaultTab, string> = {
