@@ -10,8 +10,9 @@
 
 ## 📅 Changelog
 
-### v1.6.2
-- **🔧 Bug Fixes**: Fixed some known issues.
+### v1.6.3
+- **🔧 Batch Auto-decode Save Fix**: Fixed an issue where auto-decoded batch task results could not be saved correctly.
+- **🛠️ Optimizations & Fixes**: Improved batch task handling and fixed other known issues.
 
 ### v1.6.1
 - **🔧 Bug Fixes**: Fixed some known issues.
@@ -121,8 +122,9 @@ RunningHub AI Client is a modern desktop application built with React and Vite, 
 
 ## 📅 更新日志 (Changelog)
 
-### v1.6.2
-- **🔧 问题修复**: 修复一些已知问题。
+### v1.6.3
+- **🔧 批量任务自动解码保存修复**: 修复批量任务开启自动解码后结果无法正常保存的问题。
+- **🛠️ 优化与修复**: 优化批量任务处理流程，并修复其他已知问题。
 
 ### v1.6.1
 - **🔧 问题修复**: 修复一些已知问题。
