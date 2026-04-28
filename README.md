@@ -104,7 +104,13 @@ RunningHub AI Client is a modern desktop application built with React and Vite, 
 - **Thanks to T8.star and RH Boss for support**
 - If this helps you, please give a ⭐!
 ---
-© 2025 RunningHub Client. All Rights Reserved.
+Copyright (C) 2025 RunningHub Client.
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE).
+
+Modified versions that are distributed or offered for remote network use must make the corresponding source code available under the same license.
 
 </div>
 
@@ -216,6 +222,12 @@ RunningHub AI Client 是一个基于 React 和 Vite 构建的现代化桌面端�
 - **感谢T8.star，RH温总支持**
 - 如果对你有帮助，记得点⭐支持一下哦。
 ---
-© 2025 RunningHub Client. All Rights Reserved.
+Copyright (C) 2025 RunningHub Client.
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE).
+
+Modified versions that are distributed or offered for remote network use must make the corresponding source code available under the same license.
 
 </div>
