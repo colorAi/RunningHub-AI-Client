@@ -181,7 +181,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       }}
     >
       <div
-        className="flex max-h-[90vh] w-[1320px] max-w-[95vw] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-[#1a1d24]"
+        className="flex h-[82vh] w-[1320px] max-w-[95vw] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-[#1a1d24]"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-100 p-6 dark:border-slate-800/50">
@@ -198,10 +198,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-12 gap-6">
-            <div className="col-span-12 lg:col-span-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800/50 dark:bg-slate-900/30">
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          <div className="grid h-full grid-cols-12 items-start gap-6">
+            <div className="col-span-12 min-h-0 lg:col-span-5 lg:h-full">
+              <div className="flex max-h-[calc(82vh-180px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800/50 dark:bg-slate-900/30 lg:h-full">
                 <div className="mb-5 flex items-start justify-between gap-4">
                   <div>
                     <div className="flex items-center gap-2 text-slate-800 dark:text-white">
@@ -237,7 +237,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-4">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
                   {entries.map((entry, index) => (
                     <div
                       key={entry.id}
@@ -298,30 +298,30 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
 
                       <div className="mt-4">
-                        <div className="mb-2">
+                        <div className="flex items-center justify-between gap-3">
                           <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                             API 并发数
                           </label>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          {CONCURRENCY_OPTIONS.map((option) => {
-                            const isActive = (entry.concurrency || 1) === option;
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            {CONCURRENCY_OPTIONS.map((option) => {
+                              const isActive = (entry.concurrency || 1) === option;
 
-                            return (
-                              <button
-                                key={option}
-                                type="button"
-                                onClick={() => handleConcurrencySelect(entry.id, option)}
-                                className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition-all ${
-                                  isActive
-                                    ? 'border-brand-500 bg-brand-500 text-white shadow-lg shadow-brand-500/20'
-                                    : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-[#0F1115] dark:text-slate-300 dark:hover:border-brand-700 dark:hover:text-brand-400'
-                                }`}
-                              >
-                                {option}
-                              </button>
-                            );
-                          })}
+                              return (
+                                <button
+                                  key={option}
+                                  type="button"
+                                  onClick={() => handleConcurrencySelect(entry.id, option)}
+                                  className={`min-w-7 rounded-md border px-2 py-1 text-[11px] font-semibold leading-none transition-all ${
+                                    isActive
+                                      ? 'border-brand-500 bg-brand-500 text-white shadow-sm shadow-brand-500/20'
+                                      : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-[#0F1115] dark:text-slate-300 dark:hover:border-brand-700 dark:hover:text-brand-400'
+                                  }`}
+                                >
+                                  {option}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                         <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
                           每个 API 的并发独立生效，批量任务和多任务模式会按总槽位数调度。
@@ -367,21 +367,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 {configuredEntries.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     {entries.map((entry, index) => (
                       <div
                         key={`account-${entry.id}`}
-                        className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/20"
+                        className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-slate-900/20"
                       >
-                        <div className="mb-4 flex items-center justify-between gap-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
                           <div>
                             <div className="text-sm font-semibold text-slate-800 dark:text-white">API {index + 1}</div>
-                            <div className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                              {maskApiKey(entry.apiKey)}
-                            </div>
                           </div>
-                          <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500 shadow-sm dark:bg-[#0F1115] dark:text-slate-300">
-                            并发 {entry.concurrency || 1}
+                          <div
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm dark:border-slate-700 dark:bg-[#0F1115] dark:text-slate-300"
+                            title={`并发数 ${entry.concurrency || 1}`}
+                          >
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500">并发数</span>
+                            <span>{entry.concurrency || 1}</span>
                           </div>
                         </div>
 
@@ -390,30 +391,42 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             {entry.error}
                           </div>
                         ) : entry.accountInfo ? (
-                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                            <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#161920]">
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+                            <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#161920]">
                               <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">RH 币</div>
-                              <div className="mt-2 text-2xl font-bold text-amber-600 dark:text-amber-400">
+                              <div
+                                className="mt-2 truncate text-lg font-bold leading-tight tracking-tight text-amber-600 dark:text-amber-400 sm:text-xl"
+                                title={entry.accountInfo.remainCoins}
+                              >
                                 {entry.accountInfo.remainCoins}
                               </div>
                             </div>
-                            <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#161920]">
-                              <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">钱包余额</div>
-                              <div className="mt-2 text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                                {entry.accountInfo.remainMoney
-                                  ? `${entry.accountInfo.currency || ''} ${entry.accountInfo.remainMoney}`
-                                  : '-'}
+                            <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#161920]">
+                              <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                                钱包余额{entry.accountInfo.currency ? ` (${entry.accountInfo.currency})` : ''}
+                              </div>
+                              <div
+                                className="mt-2 truncate text-lg font-bold leading-tight tracking-tight text-emerald-600 dark:text-emerald-400 sm:text-xl"
+                                title={entry.accountInfo.remainMoney ? `${entry.accountInfo.currency || ''} ${entry.accountInfo.remainMoney}`.trim() : '-'}
+                              >
+                                {entry.accountInfo.remainMoney || '-'}
                               </div>
                             </div>
-                            <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#161920]">
+                            <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#161920]">
                               <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">当前任务</div>
-                              <div className="mt-2 text-2xl font-bold text-slate-800 dark:text-slate-100">
+                              <div
+                                className="mt-2 truncate text-lg font-bold leading-tight tracking-tight text-slate-800 dark:text-slate-100 sm:text-xl"
+                                title={entry.accountInfo.currentTaskCounts}
+                              >
                                 {entry.accountInfo.currentTaskCounts}
                               </div>
                             </div>
-                            <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#161920]">
+                            <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#161920]">
                               <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">API 类型</div>
-                              <div className="mt-2 text-lg font-bold text-slate-800 dark:text-slate-100">
+                              <div
+                                className="mt-2 truncate text-base font-bold leading-tight text-slate-800 dark:text-slate-100 sm:text-lg"
+                                title={entry.accountInfo.apiType}
+                              >
                                 {entry.accountInfo.apiType}
                               </div>
                             </div>

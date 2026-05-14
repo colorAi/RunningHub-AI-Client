@@ -8,11 +8,14 @@
 
 - **Registration Bonus**: [Click to register (China) for 1000 RH Coins](https://www.runninghub.cn/?inviteCode=rh-v1123), [Click to register (Overseas) for 1000 RH Coins](https://www.runninghub.ai/?inviteCode=rh-v1123)
 
+## Commercial Licensing
+
+For commercial licensing or secondary development authorization, please contact QQ 409993197 (please state your purpose).
+
 ## 📅 Changelog
 
 ### v1.6.3
-- **🔧 Batch Auto-decode Save Fix**: Fixed an issue where auto-decoded batch task results could not be saved correctly.
-- **🛠️ Optimizations & Fixes**: Improved batch task handling and fixed other known issues.
+- **🔧 Bug Fixes**: Fixed known issues.
 
 ### v1.6.1
 - **🔧 Bug Fixes**: Fixed some known issues.
@@ -126,11 +129,14 @@ Modified versions that are distributed or offered for remote network use must ma
 
 - **注册福利**: [国内点击注册送1000RH币](https://www.runninghub.cn/?inviteCode=rh-v1123) ,[海外点击注册送1000RH币](https://www.runninghub.ai/?inviteCode=rh-v1123)
 
+## 商业授权
+
+商用授权、二次开发授权请联系 QQ 409993197（注明来意）。
+
 ## 📅 更新日志 (Changelog)
 
 ### v1.6.3
-- **🔧 批量任务自动解码保存修复**: 修复批量任务开启自动解码后结果无法正常保存的问题。
-- **🛠️ 优化与修复**: 优化批量任务处理流程，并修复其他已知问题。
+- **🔧 问题修复**: 修复已知问题。
 
 ### v1.6.1
 - **🔧 问题修复**: 修复一些已知问题。

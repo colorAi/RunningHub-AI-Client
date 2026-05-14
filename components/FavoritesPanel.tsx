@@ -1,6 +1,21 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Star, MousePointerClick, Heart, Play, Globe, User, RefreshCw, Loader2, Download, Upload, CheckCircle2, AlertCircle, X } from 'lucide-react';
-import { Favorite, NodeInfo, WebAppInfo } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+    AlertCircle,
+    CheckCircle2,
+    Download,
+    Globe,
+    Heart,
+    Loader2,
+    MousePointerClick,
+    Play,
+    RefreshCw,
+    Star,
+    Trash2,
+    Upload,
+    User,
+    X,
+} from 'lucide-react';
+import { Favorite } from '../types';
 import { getNodeList } from '../services/api';
 
 interface FavoritesPanelProps {
@@ -10,17 +25,20 @@ interface FavoritesPanelProps {
     onUpdateFavorites: (favorites: Favorite[]) => void;
 }
 
-const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error', onClose: () => void }) => {
+const Toast = ({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) => {
     useEffect(() => {
         const timer = setTimeout(onClose, 3000);
         return () => clearTimeout(timer);
     }, [onClose]);
 
     return (
-        <div className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 flex items-center gap-3 px-6 py-4 rounded-xl shadow-2xl border animate-in zoom-in-95 fade-in duration-200 ${type === 'success'
-            ? 'bg-emerald-50/95 backdrop-blur text-emerald-900 border-emerald-200 dark:bg-emerald-950/90 dark:text-emerald-100 dark:border-emerald-800'
-            : 'bg-red-50/95 backdrop-blur text-red-900 border-red-200 dark:bg-red-950/90 dark:text-red-100 dark:border-red-800'
-            }`}>
+        <div
+            className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 flex items-center gap-3 px-6 py-4 rounded-xl shadow-2xl border animate-in zoom-in-95 fade-in duration-200 ${
+                type === 'success'
+                    ? 'bg-emerald-50/95 backdrop-blur text-emerald-900 border-emerald-200 dark:bg-emerald-950/90 dark:text-emerald-100 dark:border-emerald-800'
+                    : 'bg-red-50/95 backdrop-blur text-red-900 border-red-200 dark:bg-red-950/90 dark:text-red-100 dark:border-red-800'
+            }`}
+        >
             {type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-500" /> : <AlertCircle className="w-5 h-5 text-red-500" />}
             <span className="text-sm font-medium">{message}</span>
             <button onClick={onClose} className="p-1 hover:bg-black/5 dark:hover:bg-white/10 rounded-full transition-colors">
@@ -33,16 +51,49 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
 const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp, apiKeys, onUpdateFavorites }) => {
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncProgress, setSyncProgress] = useState(0);
-    const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [staleFavoriteIds, setStaleFavoriteIds] = useState<Set<string>>(new Set());
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        const currentIds = new Set(favorites.map(fav => fav.webappId));
+        setStaleFavoriteIds(prev => {
+            const next = new Set(Array.from(prev).filter(id => currentIds.has(id)));
+            return next.size === prev.size ? prev : next;
+        });
+    }, [favorites]);
 
     const showToast = (message: string, type: 'success' | 'error') => {
         setToast({ message, type });
     };
 
+    const handleRemoveFavorite = (webappId: string, message = '已取消收藏') => {
+        const updatedFavorites = favorites.filter(fav => fav.webappId !== webappId);
+        onUpdateFavorites(updatedFavorites);
+        setStaleFavoriteIds(prev => {
+            const next = new Set(prev);
+            next.delete(webappId);
+            return next;
+        });
+        showToast(message, 'success');
+    };
+
+    const handleClearStaleFavorites = () => {
+        if (staleFavoriteIds.size === 0) {
+            showToast('当前没有可清理的失效收藏', 'success');
+            return;
+        }
+
+        const updatedFavorites = favorites.filter(fav => !staleFavoriteIds.has(fav.webappId));
+        const removedCount = favorites.length - updatedFavorites.length;
+        onUpdateFavorites(updatedFavorites);
+        setStaleFavoriteIds(new Set());
+        showToast(`已清理 ${removedCount} 个失效收藏`, 'success');
+    };
+
     const handleSyncFavorites = async () => {
         if (apiKeys.length === 0) {
-            showToast("请先在个人中心配置有效的 API Key", 'error');
+            showToast('请先在个人中心配置有效的 API Key', 'error');
             return;
         }
 
@@ -52,49 +103,63 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
         const total = favorites.length;
         let completed = 0;
         const updatedFavorites = [...favorites];
+        const failedIds = new Set<string>();
         const limit = 3;
 
         for (let i = 0; i < total; i += limit) {
             const batchIndices = updatedFavorites.slice(i, i + limit).map((_, idx) => i + idx);
 
-            await Promise.all(batchIndices.map(async (index) => {
-                if (index >= updatedFavorites.length) return;
-                const fav = updatedFavorites[index];
-                try {
-                    const result = await getNodeList(apiKeys[0], fav.webappId);
-                    if (result.appInfo) {
-                        updatedFavorites[index] = {
-                            ...fav,
-                            appInfo: result.appInfo,
-                            nodes: result.nodes
-                        };
+            await Promise.all(
+                batchIndices.map(async index => {
+                    if (index >= updatedFavorites.length) return;
+                    const fav = updatedFavorites[index];
+                    try {
+                        const result = await getNodeList(apiKeys[0], fav.webappId);
+                        if (result.appInfo) {
+                            updatedFavorites[index] = {
+                                ...fav,
+                                appInfo: result.appInfo,
+                                nodes: result.nodes,
+                            };
+                            failedIds.delete(fav.webappId);
+                        } else {
+                            failedIds.add(fav.webappId);
+                        }
+                    } catch (e) {
+                        console.error(`Failed to sync favorite ${fav.webappId}`, e);
+                        failedIds.add(fav.webappId);
                     }
-                } catch (e) {
-                    console.error(`Failed to sync favorite ${fav.webappId}`);
-                }
-            }));
+                }),
+            );
 
             completed += batchIndices.length;
             setSyncProgress(Math.floor((completed / total) * 100));
         }
 
         onUpdateFavorites(updatedFavorites);
+        setStaleFavoriteIds(failedIds);
         setIsSyncing(false);
-        showToast("收藏同步完成", 'success');
+
+        if (failedIds.size > 0) {
+            showToast(`收藏同步完成，发现 ${failedIds.size} 个失效应用，可直接清理`, 'success');
+        } else {
+            showToast('收藏同步完成', 'success');
+        }
     };
 
     const handleExportFavorites = () => {
         try {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(favorites, null, 2));
+            const dataStr = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(favorites, null, 2))}`;
             const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", `favorites_backup_${new Date().toISOString().split('T')[0]}.json`);
+            downloadAnchorNode.setAttribute('href', dataStr);
+            downloadAnchorNode.setAttribute('download', `favorites_backup_${new Date().toISOString().split('T')[0]}.json`);
             document.body.appendChild(downloadAnchorNode);
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
-            showToast("导出成功", 'success');
+            showToast('导出成功', 'success');
         } catch (e) {
-            showToast("导出失败", 'error');
+            console.error('Export favorites failed:', e);
+            showToast('导出失败', 'error');
         }
     };
 
@@ -103,7 +168,7 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = e => {
             try {
                 const content = e.target?.result as string;
                 const importedFavorites = JSON.parse(content) as Favorite[];
@@ -146,13 +211,7 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
                 </h2>
 
                 <div className="flex items-center gap-2">
-                    <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleImportFavorites}
-                        className="hidden"
-                        accept=".json"
-                    />
+                    <input type="file" ref={fileInputRef} onChange={handleImportFavorites} className="hidden" accept=".json" />
 
                     <button
                         onClick={() => fileInputRef.current?.click()}
@@ -170,6 +229,16 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
                     >
                         <Download className="w-3.5 h-3.5" />
                         <span>导出</span>
+                    </button>
+
+                    <button
+                        onClick={handleClearStaleFavorites}
+                        disabled={staleFavoriteIds.size === 0}
+                        className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="清理失效收藏"
+                    >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>清理失效{staleFavoriteIds.size > 0 ? ` (${staleFavoriteIds.size})` : ''}</span>
                     </button>
 
                     <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
@@ -197,8 +266,9 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
             {favorites.length > 0 ? (
                 <div className="flex-1 overflow-y-auto p-4">
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                        {favorites.map((fav) => {
+                        {favorites.map(fav => {
                             const info = fav.appInfo;
+                            const isStale = staleFavoriteIds.has(fav.webappId);
 
                             return (
                                 <div
@@ -219,18 +289,35 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
                                             </div>
                                         )}
 
-                                        {fav.upName && (
+                                        {fav.upName && !isStale && (
                                             <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 backdrop-blur-sm rounded-md flex items-center gap-1 z-10">
                                                 <User className="w-2.5 h-2.5 text-brand-400" />
                                                 <span className="text-[10px] font-medium text-white/90">{fav.upName}</span>
                                             </div>
                                         )}
 
+                                        {isStale && (
+                                            <div className="absolute top-2 left-2 px-2 py-0.5 bg-red-500/85 backdrop-blur-sm rounded-md z-10">
+                                                <span className="text-[10px] font-medium text-white">已失效</span>
+                                            </div>
+                                        )}
+
+                                        <button
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                handleRemoveFavorite(fav.webappId, isStale ? '已删除失效收藏' : '已取消收藏');
+                                            }}
+                                            className="absolute top-2 right-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-red-500"
+                                            title={isStale ? '删除失效收藏' : '取消收藏'}
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
 
                                         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                                             <button
-                                                onClick={(e) => {
+                                                onClick={e => {
                                                     e.stopPropagation();
                                                     onSelectApp(fav);
                                                 }}
@@ -242,10 +329,7 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
                                         </div>
 
                                         <div className="absolute bottom-0 left-0 right-0 p-3 pt-8 bg-gradient-to-t from-black/90 to-transparent flex flex-col gap-1">
-                                            <h4
-                                                className="font-bold text-white text-xs line-clamp-2 leading-relaxed"
-                                                title={fav.name}
-                                            >
+                                            <h4 className="font-bold text-white text-xs line-clamp-2 leading-relaxed" title={fav.name}>
                                                 {fav.name}
                                             </h4>
 
@@ -266,9 +350,10 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({ favorites, onSelectApp,
                                                         </div>
                                                     </>
                                                 ) : (
-                                                    <span className="text-white/50 italic text-[9px]">
-                                                        ID: {fav.webappId}
-                                                    </span>
+                                                    <div className="flex flex-col gap-0.5 text-[9px]">
+                                                        <span className="text-white/50 italic">ID: {fav.webappId}</span>
+                                                        {isStale && <span className="text-red-300">该应用可能已被删除或无权访问</span>}
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>

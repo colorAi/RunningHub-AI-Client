@@ -93,6 +93,12 @@ function sanitizeFilename(filename: string, fallbackBase = 'file'): string {
   return buildSanitizedFilename(base || fallbackBase, extension, fallbackBase);
 }
 
+function buildUniqueSuffix(): string {
+  const iso = new Date().toISOString().replace(/[:.]/g, '-');
+  const random = Math.random().toString(36).slice(2, 8);
+  return `${iso}-${random}`;
+}
+
 async function checkTauriDirectoryPathAccess(path: string | null | undefined): Promise<boolean> {
   if (!path) {
     return false;
@@ -104,6 +110,18 @@ async function checkTauriDirectoryPathAccess(path: string | null | undefined): P
     console.error('Failed to verify Tauri directory access:', e);
     return false;
   }
+}
+
+async function checkSaveFileExists(filename: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return invoke<boolean>('check_file_exists', { filename });
+  }
+
+  if (!directoryHandle) {
+    return false;
+  }
+
+  return fileExists(directoryHandle, filename);
 }
 
 // ============================================================================
@@ -463,7 +481,7 @@ export async function saveFileFromUrl(
           const suffix = String(index).padStart(5, '0');
           const candidate = `${baseName}_${suffix}.${ext}`;
           
-          const exists = await invoke<boolean>('check_file_exists', { filename: candidate });
+          const exists = await checkSaveFileExists(candidate);
           if (exists) {
             index++;
           } else {
@@ -486,8 +504,7 @@ export async function saveFileFromUrl(
         
         if (fileExt) ext = fileExt;
         
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        finalFilename = `${fileBase}_${timestamp}.${ext || fileExt || 'bin'}`;
+        finalFilename = `${fileBase}_${buildUniqueSuffix()}.${ext || fileExt || 'bin'}`;
       }
 
       if (ext && !sequential) {
@@ -530,13 +547,12 @@ export async function saveFileFromUrl(
   // 如果没有提供文件名，尝试从 URL 或 Blob 类型提取
   if (!finalFilename) {
     if (url.startsWith('blob:')) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       if (!ext && blob.type) {
         const mimeExt = blob.type.split('/')[1]?.replace('jpeg', 'jpg');
         ext = sanitizeExtension(mimeExt) || 'bin';
       }
       if (!ext) ext = 'bin';
-      finalFilename = `decoded_${timestamp}.${ext}`;
+      finalFilename = `decoded_${buildUniqueSuffix()}.${ext}`;
     } else {
       const urlPath = new URL(url).pathname;
       finalFilename = urlPath.split('/').pop() || `file_${Date.now()}`;
@@ -560,7 +576,7 @@ export async function saveFileFromUrl(
       const suffix = String(index).padStart(5, '0');
       const candidate = `${baseName}_${suffix}.${ext}`;
       
-      const exists = await fileExists(directoryHandle, candidate);
+      const exists = await checkSaveFileExists(candidate);
       if (exists) {
         index++;
       } else {
@@ -583,8 +599,7 @@ export async function saveFileFromUrl(
     
     if (fileExt) ext = fileExt;
     
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    finalFilename = `${fileBase}_${timestamp}.${ext || fileExt || 'bin'}`;
+    finalFilename = `${fileBase}_${buildUniqueSuffix()}.${ext || fileExt || 'bin'}`;
   }
 
   if (ext && !sequential) {

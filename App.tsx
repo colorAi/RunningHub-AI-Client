@@ -451,7 +451,7 @@ function App() {
       <header className="bg-white dark:bg-[#0F1115] border-b border-slate-200 dark:border-slate-800/50 h-14 flex items-center justify-between pr-4 shrink-0 z-20 shadow-sm">
         <div className="flex items-center h-full gap-3">
           <img src="/r.png" alt="RunningHub" className="h-10 w-auto ml-2" />
-          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.6.2</span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.6.3</span>
           <button
             onClick={handleOpenAbout}
             className="ml-2 px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"
