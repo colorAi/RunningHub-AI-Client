@@ -5,7 +5,7 @@ import BatchReminderModal from './BatchReminderModal';
 import GeneralSettingsModal from './GeneralSettingsModal';
 import { isDecodeFeatureEnabled } from '../utils/decodeConfig';
 
-type StartupView = 'home' | 'workspace' | 'multitask' | 'skills';
+type StartupView = 'home' | 'workspace' | 'multitask';
 
 interface ToolsViewProps {
   onOpenDecodeSettings: () => void;
@@ -20,14 +20,12 @@ interface ToolsViewProps {
 
 const STARTUP_VIEW_LABELS: Record<StartupView, string> = {
   home: '首页',
-  workspace: '单任务模式',
+  workspace: '标准模型 API',
   multitask: '多任务模式',
-  skills: '短剧模式',
 };
 
 const HOME_TAB_LABELS: Record<HomeDefaultTab, string> = {
   official: '官方应用商城',
-  excellent: '优秀UP应用推荐',
   support: '交流与支持',
 };
 
@@ -81,7 +79,7 @@ const ToolsView: React.FC<ToolsViewProps> = ({
               </h3>
             </div>
             <p className="line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
-              管理自动保存、启动页和首页默认标签，让软件打开后直接进入你常用的页面，并且随时可调整。
+              管理自动保存、启动页和首页默认标签，让软件打开后直接进入标准模型 API、多任务或首页。
             </p>
             <div className="mt-3 space-y-1 text-[11px] text-slate-400 dark:text-slate-500">
               <div className="flex items-center gap-2">

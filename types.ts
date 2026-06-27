@@ -7,6 +7,9 @@ export interface NodeInfo {
   description?: string;
   descriptionEn?: string;
   fieldData?: string | Record<string, any> | any[];
+  required?: boolean;
+  multipleInputs?: boolean;
+  maxInputNum?: number;
   _taskId?: string;
 }
 
@@ -94,6 +97,19 @@ export interface AccountInfo {
   apiType: string;
 }
 
+export interface ApiQueueStatus {
+  apiKeyType: string;
+  concurrentLimit: number;
+  runningCount: string;
+  queuedCount: string;
+  totalCurrentTasks: string;
+}
+
+export interface ApiInfo {
+  account: AccountInfo;
+  queue: ApiQueueStatus;
+}
+
 export interface ApiKeyConfig {
   apiKey: string;
   concurrency: number;
@@ -104,8 +120,51 @@ export interface ApiKeyEntry {
   apiKey: string;
   concurrency?: number;
   accountInfo?: AccountInfo | null;
+  apiInfo?: ApiInfo | null;
   loading?: boolean;
   error?: string;
+}
+
+export interface RunningHubStandardModel {
+  className: string;
+  displayName: string;
+  nameCn?: string;
+  nameEn?: string;
+  endpoint: string;
+  outputType: 'image' | 'video' | 'audio' | '3d' | 'string' | 'file';
+  category?: string;
+  params: RunningHubStandardModelParam[];
+}
+
+export interface RunningHubModelPricePreview {
+  estimatedPrice: number | null;
+  currency: string | null;
+  priceText: string | null;
+  priceTextEn: string | null;
+  freeLimit: boolean;
+  freeLimitCount: number | null;
+  remainingFreeLimitCount: number | null;
+  isFreeThisCall: boolean;
+}
+
+export interface RunningHubStandardModelParam {
+  fieldKey: string;
+  type: NodeInfo['fieldType'];
+  required?: boolean;
+  label?: string;
+  description?: string;
+  descriptionEn?: string;
+  defaultValue?: unknown;
+  options?: unknown[];
+  multipleInputs?: boolean;
+  maxInputNum?: number;
+}
+
+export interface StandardModelConfig {
+  endpoint: string;
+  modelName: string | null;
+  category: string | null;
+  outputType: RunningHubStandardModel['outputType'] | null;
 }
 
 export interface AutoSaveConfig {
@@ -114,7 +173,7 @@ export interface AutoSaveConfig {
   directoryPath?: string | null;
 }
 
-export type HomeDefaultTab = 'official' | 'excellent' | 'support';
+export type HomeDefaultTab = 'official' | 'support';
 
 export interface WebAppInfo {
   webappName: string;

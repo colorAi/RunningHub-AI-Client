@@ -2,15 +2,16 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import { CheckCircle2, Clock, AlertTriangle, Terminal, Activity, Loader2, XCircle } from 'lucide-react';
 import { saveMultipleFiles, getDirectoryName } from '../services/autoSaveService';
 import { connectTaskProgress, TaskProgressSnapshot } from '../services/taskProgress';
-import { isCapacityLimitedError, queryTaskResult, submitTask, uploadFile } from '../services/api';
+import { isCapacityLimitedError, queryTaskResult, submitStandardModelTask, submitTask, uploadFile } from '../services/api';
 import { createApiCapacityManagers } from '../services/apiCapacity';
-import { ApiKeyConfig, DecodeConfig, FailedTaskInfo, InstanceType, NodeInfo, PendingFilesMap, PromptTips, TaskOutput } from '../types';
+import { ApiKeyConfig, DecodeConfig, FailedTaskInfo, InstanceType, NodeInfo, PendingFilesMap, PromptTips, StandardModelConfig, TaskOutput } from '../types';
 import { decodeDuckImage, isLikelyDuckCarrierImage } from '../utils/duckDecoder';
 import { shouldAutoDecodeOutputs } from '../utils/decodeConfig';
 
 interface StepRunningProps {
   apiConfigs: ApiKeyConfig[];
   webappId: string;
+  standardModelConfig?: StandardModelConfig;
   nodes: NodeInfo[];
   batchList?: NodeInfo[][];
   pendingFiles?: PendingFilesMap;
@@ -26,6 +27,7 @@ interface StepRunningProps {
 
 export interface StepRunningRef {
   cancelWithSummary: () => void;
+  submitAdditionalTask: (taskNodes: NodeInfo[]) => void;
 }
 
 type ViewStatus = 'INIT' | 'SUBMITTING' | 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILED';
@@ -134,6 +136,7 @@ const statusDescriptionMap: Record<ViewStatus, string> = {
 const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
   apiConfigs,
   webappId,
+  standardModelConfig,
   nodes,
   batchList,
   pendingFiles,
@@ -161,6 +164,8 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
   const hasStartedRef = useRef(false);
   const activeConnectionsRef = useRef<Set<{ close: () => void }>>(new Set());
   const savedFilesCountRef = useRef(0);
+  const standardTaskCounterRef = useRef(0);
+  const activeStandardTasksRef = useRef(0);
 
   const addLog = (msg: string) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -339,7 +344,10 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     onStatusChange?.('SUBMITTING');
     addLog(`${contextLabel}提交任务`);
 
-    const submitResult = await submitTask(apiKey, webappId, taskNodes, instanceType);
+    const isStandardModelTask = standardModelConfig !== undefined;
+    const submitResult = isStandardModelTask
+      ? await submitStandardModelTask(apiKey, standardModelConfig.endpoint, taskNodes)
+      : await submitTask(apiKey, webappId, taskNodes, instanceType);
     const submitPromptTips = parsePromptTips(submitResult.promptTips);
     if (submitPromptTips?.node_errors && Object.keys(submitPromptTips.node_errors).length > 0) {
       const parsed = parseNodeErrors(submitPromptTips.node_errors);
@@ -350,7 +358,9 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     onStatusChange?.(initialStatus);
     addLog(`${contextLabel}任务已提交: ${submitResult.taskId}`);
 
-    const stopProgressMonitor = monitorTaskProgress(taskNodes, submitResult.netWssUrl, contextLabel);
+    const stopProgressMonitor = isStandardModelTask
+      ? () => {}
+      : monitorTaskProgress(taskNodes, submitResult.netWssUrl, contextLabel);
     let lastStatus = initialStatus;
 
     try {
@@ -407,6 +417,10 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     setBatchTotal(totalTasks);
     taskUsageMapRef.current = new Map();
     const capacityManagers = createApiCapacityManagers(apiConfigs);
+    if (!isBatch && standardModelConfig) {
+      standardTaskCounterRef.current = 1;
+      activeStandardTasksRef.current = 1;
+    }
 
     const runSingleTaskAdaptive = async () => {
       const manager = capacityManagers[0];
@@ -454,7 +468,13 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
           }
 
           await saveOutputs(decodedOutputs);
-          setStatus('SUCCESS');
+          if (standardModelConfig) {
+            activeStandardTasksRef.current = Math.max(0, activeStandardTasksRef.current - 1);
+            setCurrentBatchIndex(prev => prev + 1);
+            setStatus(activeStandardTasksRef.current > 0 ? 'RUNNING' : 'SUCCESS');
+          } else {
+            setStatus('SUCCESS');
+          }
           onComplete(decodedOutputs, result.taskId);
           return;
         } catch (error: any) {
@@ -468,7 +488,14 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
             continue;
           }
 
-          setStatus('FAILED');
+          if (standardModelConfig) {
+            activeStandardTasksRef.current = Math.max(0, activeStandardTasksRef.current - 1);
+            setFailedCount(prev => prev + 1);
+            setCurrentBatchIndex(prev => prev + 1);
+            setStatus(activeStandardTasksRef.current > 0 ? 'RUNNING' : 'FAILED');
+          } else {
+            setStatus('FAILED');
+          }
           setErrorDetails(error.message || '任务执行失败');
           addLog(`任务失败: ${error.message || error}`);
           return;
@@ -818,8 +845,61 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     }
   };
 
+  const submitAdditionalTask = (taskNodes: NodeInfo[]) => {
+    if (!standardModelConfig) {
+      return;
+    }
+
+    const apiKey = apiConfigs[0]?.apiKey || '';
+    if (!apiKey) {
+      setStatus('FAILED');
+      setErrorDetails('没有可用的 API Key');
+      return;
+    }
+
+    const taskNumber = standardTaskCounterRef.current + 1;
+    standardTaskCounterRef.current = taskNumber;
+    activeStandardTasksRef.current += 1;
+    setBatchTotal(taskNumber);
+    setStatus('SUBMITTING');
+    setErrorDetails(null);
+
+    const logPrefix = `追加任务 ${taskNumber}: `;
+    void (async () => {
+      let succeeded = false;
+      try {
+        const result = await executeTask(apiKey, taskNodes.map(node => ({ ...node })), logPrefix, nextStatus => {
+          setStatus(nextStatus === 'QUEUED' ? 'QUEUED' : 'RUNNING');
+        });
+
+        if (result.usage) {
+          taskUsageMapRef.current.set(taskNumber - 1, result.usage);
+        }
+
+        const { decodedOutputs, decodedCount } = await processOutputsWithDecode(result.outputs, logPrefix);
+        if (decodedCount > 0) {
+          addLog(`${logPrefix}已解码 ${decodedCount} 个结果文件`);
+        }
+
+        await saveOutputs(decodedOutputs, taskNumber - 1, logPrefix);
+        addLog(`${logPrefix}已完成`);
+        onComplete(decodedOutputs, result.taskId);
+        succeeded = true;
+      } catch (error: any) {
+        setFailedCount(prev => prev + 1);
+        setErrorDetails(error.message || '任务执行失败');
+        addLog(`${logPrefix}失败: ${error.message || error}`);
+      } finally {
+        activeStandardTasksRef.current = Math.max(0, activeStandardTasksRef.current - 1);
+        setCurrentBatchIndex(prev => Math.min(taskNumber, prev + 1));
+        setStatus(activeStandardTasksRef.current > 0 ? 'RUNNING' : succeeded ? 'SUCCESS' : 'FAILED');
+      }
+    })();
+  };
+
   useImperativeHandle(ref, () => ({
     cancelWithSummary: handleBatchCancel,
+    submitAdditionalTask,
   }));
 
   const progressPercent = progressSnapshot ? Math.round(progressSnapshot.overallPercent) : 0;

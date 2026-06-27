@@ -14,6 +14,11 @@ For commercial licensing or secondary development authorization, please contact 
 
 ## 📅 Changelog
 
+### v1.6.4
+- **⚡ RunningHub Standard Model API**: Added enterprise shared API settings, automatic concurrency detection, standard model registry loading, parameter loading, price preview, and continuous submit support.
+- **🧹 UI Cleanup**: Removed short drama startup mode, hid excellent UP recommendations, removed friend links, and tightened API slot layout.
+- **📦 Packaging Shortcuts**: Added local shortcuts for macOS universal builds, Windows x64 builds, and a macOS damaged-app repair helper.
+
 ### v1.6.3
 - **🔧 Bug Fixes**: Fixed known issues.
 
@@ -80,6 +85,11 @@ RunningHub AI Client is a modern desktop application built with React and Vite, 
    npm run build
    ```
 
+4. **Package Desktop Client**
+   - macOS Universal (Apple Silicon + Intel): double-click `build_tauri.command`.
+   - Windows x64: double-click `build_tauri_windows.command` on macOS for cross-build output.
+   - The macOS DMG includes `如果提示应用已损坏，请双击修复.command` for clearing quarantine and repairing the local app signature.
+
 ## 📖 Usage Instructions
 
 1. **Configure Connection**: 
@@ -134,6 +144,11 @@ Modified versions that are distributed or offered for remote network use must ma
 商用授权、二次开发授权请联系 QQ 409993197（注明来意）。
 
 ## 📅 更新日志 (Changelog)
+
+### v1.6.4
+- **⚡ RunningHub 标准模型 API**: 新增企业共享 API 设置、自动获取并发数、模型注册表加载、参数加载、价格预估和运行中继续提交。
+- **🧹 界面清理**: 移除短剧启动模式，隐藏优秀 UP 应用推荐，移除交流支持中的友情链接，并压缩 API 槽位布局。
+- **📦 打包快捷方式**: 新增 macOS 双芯片通用构建、Windows x64 构建，以及 macOS “应用已损坏”修复工具。
 
 ### v1.6.3
 - **🔧 问题修复**: 修复已知问题。
@@ -200,6 +215,11 @@ RunningHub AI Client 是一个基于 React 和 Vite 构建的现代化桌面端�
    ```bash
    npm run build
    ```
+
+4. **打包桌面客户端**
+   - macOS 双芯片通用包（Apple Silicon + Intel）：双击 `build_tauri.command`。
+   - Windows x64：在 macOS 上双击 `build_tauri_windows.command` 交叉打包。
+   - macOS 的 DMG 会带上 `如果提示应用已损坏，请双击修复.command`，用于清除隔离标记并修复本地签名。
 
 ## 📖 使用说明
 

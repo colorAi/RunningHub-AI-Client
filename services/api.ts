@@ -1,8 +1,13 @@
 import {
   ApiResponse,
+  ApiInfo,
+  ApiQueueStatus,
   InstanceType,
   NodeInfo,
   PromptTips,
+  RunningHubModelPricePreview,
+  RunningHubStandardModel,
+  RunningHubStandardModelParam,
   SubmitTaskData,
   TaskOutput,
   TaskRuntimeStatus,
@@ -11,6 +16,8 @@ import {
 } from '../types';
 
 const API_HOST = 'https://www.runninghub.cn';
+export const DEFAULT_STANDARD_MODEL_BASE_URL = `${API_HOST}/openapi/v2`;
+export const DEFAULT_STANDARD_MODEL_REGISTRY_URL = 'https://raw.githubusercontent.com/HM-RunningHub/ComfyUI_RH_OpenAPI/main/models_registry.json';
 
 const RH_ERROR_MESSAGES: Record<string, string> = {
   '401': 'API Key 校验失败，请检查 Key 是否正确。',
@@ -115,6 +122,69 @@ const normalizeNodeInfo = (node: any): NodeInfo => {
     fieldData: node?.fieldData ?? node?.field_data ?? node?.options ?? undefined,
   };
 };
+
+const normalizeModelParam = (record: JsonRecord): RunningHubStandardModelParam | null => {
+  const fieldKey = String(record.fieldKey ?? record.key ?? record.fieldName ?? '').trim();
+  if (!fieldKey) {
+    return null;
+  }
+
+  const rawType = String(record.type ?? record.fieldType ?? 'STRING').toUpperCase();
+  const type = (['IMAGE', 'AUDIO', 'VIDEO', 'STRING', 'INT', 'FLOAT', 'LIST', 'SWITCH', 'BOOLEAN'].includes(rawType)
+    ? rawType
+    : 'STRING') as NodeInfo['fieldType'];
+  const maxInputNum = Number(record.maxInputNum ?? record.maxCount);
+
+  return {
+    fieldKey,
+    type,
+    required: record.required === true,
+    label: typeof record.label === 'string' ? record.label : undefined,
+    description: typeof record.description === 'string' ? record.description : undefined,
+    descriptionEn: typeof record.descriptionEn === 'string' ? record.descriptionEn : undefined,
+    defaultValue: record.defaultValue ?? record.default,
+    options: Array.isArray(record.options) ? record.options : undefined,
+    multipleInputs: record.multipleInputs === true || record.multiple === true,
+    maxInputNum: Number.isFinite(maxInputNum) ? maxInputNum : undefined,
+  };
+};
+
+const normalizeStandardModel = (record: JsonRecord): RunningHubStandardModel | null => {
+  const endpoint = String(record.endpoint ?? '').trim().replace(/^\/+/, '');
+  if (!endpoint) {
+    return null;
+  }
+
+  return {
+    className: String(record.class_name ?? record.className ?? endpoint).trim(),
+    displayName: String(record.display_name ?? record.displayName ?? record.name_cn ?? endpoint).trim(),
+    nameCn: typeof record.name_cn === 'string' ? record.name_cn : undefined,
+    nameEn: typeof record.name_en === 'string' ? record.name_en : undefined,
+    endpoint,
+    outputType: String(record.output_type ?? record.outputType ?? 'file').toLowerCase() as RunningHubStandardModel['outputType'],
+    category: typeof record.category === 'string' ? record.category : undefined,
+    params: Array.isArray(record.params)
+      ? record.params
+        .map((item: any) => normalizeModelParam(item as JsonRecord))
+        .filter((item: RunningHubStandardModelParam | null): item is RunningHubStandardModelParam => Boolean(item))
+      : [],
+  };
+};
+
+export const standardModelToNodes = (model: RunningHubStandardModel): NodeInfo[] =>
+  model.params.map(param => ({
+    nodeId: 'model',
+    nodeName: param.label || param.fieldKey,
+    fieldName: param.fieldKey,
+    fieldValue: param.defaultValue == null ? '' : String(param.defaultValue),
+    fieldType: param.type,
+    description: param.description || param.label,
+    descriptionEn: param.descriptionEn,
+    fieldData: param.options,
+    required: param.required,
+    multipleInputs: param.multipleInputs,
+    maxInputNum: param.maxInputNum,
+  }));
 
 const normalizeWebAppInfo = (data: any): WebAppInfo | null => {
   if (!data?.webappName) {
@@ -534,6 +604,197 @@ export const getAccountInfo = async (apiKey: string): Promise<{
   }
 
   return json.data;
+};
+
+export const getApiQueueStatus = async (apiKey: string): Promise<ApiQueueStatus> => {
+  const response = await fetch(`${API_HOST}/openapi/v2/queue/status`, {
+    method: 'GET',
+    headers: buildAuthHeaders(apiKey),
+  });
+
+  const json = await handleResponse<ApiResponse<ApiQueueStatus>>(response);
+
+  if (json.code !== 0 || !json.data) {
+    throw createRunningHubError(json.code, json.msg || 'Failed to get API queue status');
+  }
+
+  return {
+    apiKeyType: json.data.apiKeyType || '',
+    concurrentLimit: Math.max(1, Number(json.data.concurrentLimit) || 1),
+    runningCount: String(json.data.runningCount ?? '0'),
+    queuedCount: String(json.data.queuedCount ?? '0'),
+    totalCurrentTasks: String(json.data.totalCurrentTasks ?? '0'),
+  };
+};
+
+export const getApiInfo = async (apiKey: string): Promise<ApiInfo> => {
+  const [account, queue] = await Promise.all([
+    getAccountInfo(apiKey),
+    getApiQueueStatus(apiKey),
+  ]);
+
+  return {
+    account: {
+      ...account,
+      apiType: queue.apiKeyType || account.apiType,
+    },
+    queue,
+  };
+};
+
+export const getStandardModelRegistry = async (
+  registryUrl = DEFAULT_STANDARD_MODEL_REGISTRY_URL,
+): Promise<RunningHubStandardModel[]> => {
+  const response = await fetch(registryUrl, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  });
+
+  const json = await handleResponse<unknown>(response);
+  if (!Array.isArray(json)) {
+    throw new Error('标准模型列表返回格式无效');
+  }
+
+  return json
+    .map(item => normalizeStandardModel(item as JsonRecord))
+    .filter((item): item is RunningHubStandardModel => Boolean(item));
+};
+
+const coerceStandardModelPayloadValue = (node: NodeInfo): unknown => {
+  const rawValue = node.fieldValue;
+  if (node.fieldType === 'INT') {
+    const value = Number.parseInt(rawValue, 10);
+    return Number.isFinite(value) ? value : rawValue;
+  }
+  if (node.fieldType === 'FLOAT') {
+    const value = Number.parseFloat(rawValue);
+    return Number.isFinite(value) ? value : rawValue;
+  }
+  if (node.fieldType === 'BOOLEAN' || node.fieldType === 'SWITCH') {
+    if (rawValue === 'true') return true;
+    if (rawValue === 'false') return false;
+  }
+  if (node.multipleInputs && rawValue.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(rawValue);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Fall through to raw value.
+    }
+  }
+  return rawValue;
+};
+
+export const buildStandardModelPayload = (nodes: NodeInfo[]): Record<string, unknown> => {
+  const payload: Record<string, unknown> = {};
+  nodes.forEach(node => {
+    const value = node.fieldValue;
+    if ((value != null && String(value).trim() !== '') || node.required) {
+      payload[node.fieldName] = coerceStandardModelPayloadValue(node);
+    }
+  });
+  return payload;
+};
+
+export const fetchStandardModelPricePreview = async (
+  apiKey: string,
+  endpoint: string,
+  nodesOrPayload: NodeInfo[] | Record<string, unknown>,
+  baseUrl = DEFAULT_STANDARD_MODEL_BASE_URL,
+  signal?: AbortSignal,
+): Promise<RunningHubModelPricePreview> => {
+  const normalizedEndpoint = endpoint.trim().replace(/^\/+/, '');
+  if (!normalizedEndpoint) {
+    throw new Error('请先选择标准模型');
+  }
+
+  const payload = Array.isArray(nodesOrPayload)
+    ? buildStandardModelPayload(nodesOrPayload)
+    : nodesOrPayload;
+
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/price-preview/${normalizedEndpoint}`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...buildAuthHeaders(apiKey),
+    },
+    body: JSON.stringify({
+      ...payload,
+      appCode: payload.appCode ?? 'runninghub_client_standard_model',
+    }),
+  });
+
+  const json = await handleResponse<any>(response);
+  const errorCode = json.errorCode ?? json.error_code;
+  const errorMessage = json.errorMessage ?? json.error_message;
+
+  if (errorCode || errorMessage) {
+    throw createRunningHubError(errorCode, String(errorMessage || '标准模型价格预估失败'));
+  }
+
+  const estimatedPrice = Number(json.estimatedPrice ?? json.estimated_price);
+  const freeLimitCount = Number(json.freeLimitCount ?? json.free_limit_count);
+  const remainingFreeLimitCount = Number(json.remainingFreeLimitCount ?? json.remaining_free_limit_count);
+
+  return {
+    estimatedPrice: Number.isFinite(estimatedPrice) ? estimatedPrice : null,
+    currency: typeof json.currency === 'string' ? json.currency : null,
+    priceText: typeof json.priceText === 'string' ? json.priceText : null,
+    priceTextEn: typeof json.priceTextEn === 'string' ? json.priceTextEn : null,
+    freeLimit: json.freeLimit === true || json.free_limit === true,
+    freeLimitCount: Number.isFinite(freeLimitCount) ? freeLimitCount : null,
+    remainingFreeLimitCount: Number.isFinite(remainingFreeLimitCount) ? remainingFreeLimitCount : null,
+    isFreeThisCall: json.isFreeThisCall === true || json.is_free_this_call === true,
+  };
+};
+
+export const submitStandardModelTask = async (
+  apiKey: string,
+  endpoint: string,
+  nodesOrPayload: NodeInfo[] | Record<string, unknown>,
+  baseUrl = DEFAULT_STANDARD_MODEL_BASE_URL,
+): Promise<SubmitTaskData> => {
+  const normalizedEndpoint = endpoint.trim().replace(/^\/+/, '');
+  if (!normalizedEndpoint) {
+    throw new Error('请先选择标准模型');
+  }
+
+  const payload = Array.isArray(nodesOrPayload)
+    ? buildStandardModelPayload(nodesOrPayload)
+    : nodesOrPayload;
+
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/${normalizedEndpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...buildAuthHeaders(apiKey),
+    },
+    body: JSON.stringify({
+      ...payload,
+      appCode: payload.appCode ?? 'runninghub_client_standard_model',
+    }),
+  });
+
+  const json = await handleResponse<any>(response);
+  const errorCode = json.errorCode ?? json.error_code;
+  const errorMessage = json.errorMessage ?? json.error_message;
+
+  if (errorCode || errorMessage) {
+    throw createRunningHubError(errorCode, String(errorMessage || '标准模型提交失败'));
+  }
+
+  const taskId = String(json.taskId ?? json.task_id ?? '').trim();
+  if (!taskId) {
+    throw new Error('标准模型提交后未返回 taskId');
+  }
+
+  return {
+    taskId,
+    taskStatus: normalizeTaskStatus(json.status ?? json.taskStatus ?? 'QUEUED'),
+  };
 };
 
 export interface AppListItem {

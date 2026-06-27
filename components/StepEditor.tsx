@@ -1,8 +1,8 @@
-import React, { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
-import { NodeInfo, WebAppInfo, DecodeConfig, InstanceType, PendingFilesMap } from '../types';
+import React, { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { NodeInfo, WebAppInfo, DecodeConfig, InstanceType, PendingFilesMap, RunningHubModelPricePreview, StandardModelConfig } from '../types';
 import { getSwitchFieldConfig, parseListOptions } from '../utils/nodeUtils';
 import { Upload, Type, List, FileImage, Play, Mic, PlayCircle, AlertCircle, Loader2, Sliders, X, UploadCloud, FileAudio, FileVideo, ChevronDown, Image as ImageIcon, Layers, Settings, Info, Lock, Zap, Maximize2 } from 'lucide-react';
-import { uploadFile, buildFileUrl } from '../services/api';
+import { buildStandardModelPayload, fetchStandardModelPricePreview, uploadFile, buildFileUrl } from '../services/api';
 import BatchSettingsModal from './BatchSettingsModal';
 import AppInfoModal from './AppInfoModal';
 
@@ -24,6 +24,8 @@ interface StepEditorProps {
     initialBatchList?: NodeInfo[][];
     initialBatchTaskName?: string;
     initialPendingFiles?: PendingFilesMap;
+    mode?: 'app' | 'standard';
+    standardModelConfig?: StandardModelConfig;
 }
 
 export interface StepEditorSnapshot {
@@ -45,6 +47,33 @@ const EMPTY_PENDING_FILES: PendingFilesMap = {};
 
 const cloneNodeRows = (rows?: NodeInfo[][]) => (rows || []).map(row => row.map(node => ({ ...node })));
 const clonePendingFiles = (files?: PendingFilesMap) => ({ ...(files || {}) });
+const formatPricePreview = (preview: RunningHubModelPricePreview | null): string | null => {
+    if (!preview) return null;
+    if (preview.isFreeThisCall || preview.estimatedPrice === 0) {
+        return '本次免费';
+    }
+    if (preview.priceText) {
+        return `约 ${preview.priceText}/次`;
+    }
+    if (preview.estimatedPrice == null) {
+        return null;
+    }
+
+    const currency = (preview.currency || 'CNY').toUpperCase();
+    try {
+        const formatted = new Intl.NumberFormat('zh-CN', {
+            style: 'currency',
+            currency,
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 4,
+        }).format(preview.estimatedPrice);
+        return `约 ${formatted}/次`;
+    } catch {
+        const trimmedPrice = preview.estimatedPrice.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+        return `约 ${trimmedPrice} ${currency}/次`;
+    }
+};
+
 const hasSameNodeStructure = (left: NodeInfo[], right: NodeInfo[]) => {
     if (left.length !== right.length) return false;
 
@@ -57,11 +86,13 @@ const hasSameNodeStructure = (left: NodeInfo[], right: NodeInfo[]) => {
     });
 };
 
-const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, decodeConfig, failedBatchIndices = new Set(), onRetryTask, instanceType = 'default', onInstanceTypeChange, initialBatchList = EMPTY_BATCH_LIST, initialBatchTaskName = '', initialPendingFiles = EMPTY_PENDING_FILES }, ref) => {
+const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, decodeConfig, failedBatchIndices = new Set(), onRetryTask, instanceType = 'default', onInstanceTypeChange, initialBatchList = EMPTY_BATCH_LIST, initialBatchTaskName = '', initialPendingFiles = EMPTY_PENDING_FILES, mode = 'app', standardModelConfig }, ref) => {
     const editorDomId = useId().replace(/:/g, '-');
     const [localNodes, setLocalNodes] = useState<NodeInfo[]>(nodes);
     const [uploadingState, setUploadingState] = useState<Record<string, boolean>>({});
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const [modelPricePreview, setModelPricePreview] = useState<RunningHubModelPricePreview | null>(null);
+    const [isLoadingPricePreview, setIsLoadingPricePreview] = useState(false);
 
 
 
@@ -86,6 +117,14 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
     const [brokenAudios, setBrokenAudios] = useState<Record<string, boolean>>({});
     const previousNodesRef = useRef<NodeInfo[]>(nodes);
     const nodesTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const primaryApiKey = apiKeys[0] || '';
+    const hasUploadingFiles = Object.values(uploadingState).some(Boolean);
+    const standardModelEndpoint = standardModelConfig?.endpoint?.trim() || '';
+    const modelPricePreviewPayload = useMemo(
+        () => mode === 'standard' ? buildStandardModelPayload(localNodes) : {},
+        [localNodes, mode],
+    );
+    const modelPricePreviewLabel = formatPricePreview(modelPricePreview);
 
     // Use a ref to track current previews for cleanup
     const previewsRef = useRef(previews);
@@ -165,10 +204,51 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
             pendingFiles: { ...pendingFiles },
             batchTaskName,
             instanceType,
-            hasUploadingFiles: Object.values(uploadingState).some(Boolean),
+            hasUploadingFiles,
             isConnected,
         })
-    }), [batchList, batchTaskName, instanceType, isConnected, localNodes, pendingFiles, uploadingState]);
+    }), [batchList, batchTaskName, hasUploadingFiles, instanceType, isConnected, localNodes, pendingFiles]);
+
+    useEffect(() => {
+        if (mode !== 'standard' || !isConnected || !standardModelEndpoint || !primaryApiKey || hasUploadingFiles) {
+            setModelPricePreview(null);
+            setIsLoadingPricePreview(false);
+            return;
+        }
+
+        const abortController = new AbortController();
+        const timer = window.setTimeout(() => {
+            setIsLoadingPricePreview(true);
+            fetchStandardModelPricePreview(
+                primaryApiKey,
+                standardModelEndpoint,
+                modelPricePreviewPayload,
+                undefined,
+                abortController.signal,
+            )
+                .then((preview) => {
+                    if (!abortController.signal.aborted) {
+                        setModelPricePreview(preview);
+                    }
+                })
+                .catch((error) => {
+                    if (!abortController.signal.aborted) {
+                        console.warn('Failed to preview standard model price', error);
+                        setModelPricePreview(null);
+                    }
+                })
+                .finally(() => {
+                    if (!abortController.signal.aborted) {
+                        setIsLoadingPricePreview(false);
+                    }
+                });
+        }, 500);
+
+        return () => {
+            window.clearTimeout(timer);
+            abortController.abort();
+        };
+    }, [hasUploadingFiles, isConnected, mode, modelPricePreviewPayload, primaryApiKey, standardModelEndpoint]);
 
     const handleTextChange = (index: number, val: string) => {
         const newNodes = [...localNodes];
@@ -787,6 +867,11 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
     };
 
     const handleBatchRun = () => {
+        if (mode === 'standard') {
+            onRun(localNodes, undefined, undefined, decodeConfig, undefined, instanceType);
+            return;
+        }
+
         if (batchList.length === 0) {
             // Fallback to normal run if no batch list
             onRun(localNodes, undefined, undefined, decodeConfig, undefined, instanceType);
@@ -818,14 +903,14 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
             <div className="p-5 border-b border-slate-200 dark:border-slate-800/50 bg-white dark:bg-[#161920] shrink-0 z-10 shadow-sm">
                 <div className="flex items-center justify-between">
                     <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800 dark:text-white">
-                        参数设置
+                        {mode === 'standard' ? '标准模型参数' : '参数设置'}
                         <span className="text-xs font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 px-2 py-0.5 rounded border border-brand-100 dark:border-brand-900/50">
-                            {nodes.length} 个节点
+                            {nodes.length} 个参数
                         </span>
                     </h2>
                     <div className="flex items-center gap-2">
                         {/* PLUS 模式切换按钮 */}
-                        <button
+                        {mode === 'app' && <button
                             onClick={() => onInstanceTypeChange?.(instanceType === 'default' ? 'plus' : 'default')}
                             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
                                 instanceType === 'plus'
@@ -836,10 +921,10 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
                         >
                             <Zap className={`w-3.5 h-3.5 ${instanceType === 'plus' ? 'animate-pulse' : ''}`} />
                             PLUS 模式
-                        </button>
+                        </button>}
 
                         {/* App Info Button */}
-                        {webAppInfo && (
+                        {mode === 'app' && webAppInfo && (
                             <button
                                 onClick={() => setIsAppInfoModalOpen(true)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors border border-slate-200 dark:border-slate-700 text-xs font-medium"
@@ -915,7 +1000,9 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
                     <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600 py-20 text-center">
                         <AlertCircle className="w-16 h-16 mb-4 opacity-20" />
                         <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400">等待连接</h3>
-                        <p className="text-sm max-w-xs mt-2">请在左侧侧边栏输入您的 API Key 和应用 ID 以加载参数。</p>
+                        <p className="text-sm max-w-xs mt-2">
+                            {mode === 'standard' ? '请在左侧获取模型并加载参数。' : '请在左侧侧边栏输入您的 API Key 和应用 ID 以加载参数。'}
+                        </p>
                     </div>
                 ) : isNodesLoading ? (
                     // Skeleton loading state
@@ -964,7 +1051,7 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
             {/* Footer - 运行按钮固定在底部 */}
             <div className="bg-white dark:bg-[#161920] border-t border-slate-200 dark:border-slate-800/50 p-4 shrink-0 flex gap-3">
                 {/* 单独运行按钮 */}
-                {runType === 'single' ? (
+                {runType === 'single' && mode !== 'standard' ? (
                     <button
                         onClick={onCancel}
                         className="flex-1 flex justify-center items-center gap-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-red-200 dark:shadow-red-900/20 transform hover:-translate-y-0.5 transition-all text-sm"
@@ -975,44 +1062,54 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
                 ) : (
                     <button
                         onClick={() => onRun(localNodes, undefined, undefined, decodeConfig, undefined, instanceType)}
-                        disabled={!isConnected || Object.values(uploadingState).some(Boolean) || runType === 'batch'}
+                        disabled={!isConnected || hasUploadingFiles || runType === 'batch'}
                         className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-brand-200 dark:shadow-brand-900/20 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none disabled:shadow-none text-sm"
                     >
                         <Play className="w-4 h-4 fill-current" />
-                        运行
+                        {mode === 'standard' && isLoadingPricePreview
+                            ? `${runType === 'single' ? '继续提交' : '运行'} · 估价中...`
+                            : mode === 'standard' && modelPricePreviewLabel
+                                ? `${runType === 'single' ? '继续提交' : '运行'} · ${modelPricePreviewLabel}`
+                                : mode === 'standard' && runType === 'single'
+                                    ? '继续提交'
+                                    : '运行'}
                     </button>
                 )}
 
-                {/* 批量运行按钮 */}
-                {runType === 'batch' ? (
-                    <button
-                        onClick={onCancel}
-                        className="flex-1 flex justify-center items-center gap-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-red-200 dark:shadow-red-900/20 transform hover:-translate-y-0.5 transition-all text-sm"
-                    >
-                        <X className="w-4 h-4" />
-                        取消批量
-                    </button>
-                ) : (
-                    <button
-                        onClick={handleBatchRun}
-                        disabled={!isConnected || Object.values(uploadingState).some(Boolean) || runType === 'single'}
-                        className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-orange-200 dark:shadow-orange-900/20 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none disabled:shadow-none text-sm"
-                    >
-                        <Layers className="w-4 h-4" />
-                        批量运行
-                    </button>
-                )}
+                {mode === 'app' && (
+                    <>
+                        {/* 批量运行按钮 */}
+                        {runType === 'batch' ? (
+                            <button
+                                onClick={onCancel}
+                                className="flex-1 flex justify-center items-center gap-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-red-200 dark:shadow-red-900/20 transform hover:-translate-y-0.5 transition-all text-sm"
+                            >
+                                <X className="w-4 h-4" />
+                                取消批量
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleBatchRun}
+                                disabled={!isConnected || hasUploadingFiles || runType === 'single'}
+                                className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold py-3 px-5 rounded-lg shadow-md shadow-orange-200 dark:shadow-orange-900/20 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:transform-none disabled:shadow-none text-sm"
+                            >
+                                <Layers className="w-4 h-4" />
+                                批量运行
+                            </button>
+                        )}
 
-                {/* 设置按钮 */}
-                <button
-                    onClick={() => setIsBatchModalOpen(true)}
-                    disabled={!isConnected || runType === 'single' || runType === 'batch'}
-                    className="flex items-center justify-center gap-2 px-5 py-3 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg shadow-sm transition-all disabled:opacity-50"
-                    title="批量设置"
-                >
-                    <Settings className="w-4 h-4" />
-                    <span>批量设置</span>
-                </button>
+                        {/* 设置按钮 */}
+                        <button
+                            onClick={() => setIsBatchModalOpen(true)}
+                            disabled={!isConnected || runType === 'single' || runType === 'batch'}
+                            className="flex items-center justify-center gap-2 px-5 py-3 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg shadow-sm transition-all disabled:opacity-50"
+                            title="批量设置"
+                        >
+                            <Settings className="w-4 h-4" />
+                            <span>批量设置</span>
+                        </button>
+                    </>
+                )}
             </div>
         </div>
     );

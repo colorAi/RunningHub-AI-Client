@@ -5,7 +5,7 @@ import SettingsModal from './components/SettingsModal';
 import DecodeSettingsModal from './components/DecodeSettingsModal';
 import Footer from './components/Footer';
 import TermsModal from './components/TermsModal';
-import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, DecodeConfig, HistoryItem, RecentApp, FailedTaskInfo, InstanceType, PendingFilesMap, HomeDefaultTab } from './types';
+import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, DecodeConfig, HistoryItem, RecentApp, FailedTaskInfo, InstanceType, HomeDefaultTab, StandardModelConfig } from './types';
 import { saveMultipleFiles, getDirectoryName, initAutoSave, checkDirectoryAccess, getCurrentDirectoryPath } from './services/autoSaveService';
 import { DEFAULT_DECODE_CONFIG, normalizeDecodeConfig } from './utils/decodeConfig';
 
@@ -19,13 +19,13 @@ const ToolsView = lazy(() => import('./components/ToolsView'));
 
 
 const STORAGE_KEY_API_KEYS = 'rh_api_keys_v2';
+const STORAGE_KEY_ENTERPRISE_API = 'rh_enterprise_api_v1';
 const STORAGE_KEY_AUTOSAVE = 'rh_autosave_config';
 const STORAGE_KEY_FAVORITES = 'rh_favorites';
 const STORAGE_KEY_DECODE = 'rh_decode_config';
 const STORAGE_KEY_RECENT = 'rh_recent_apps';
 const STORAGE_KEY_STARTUP_VIEW = 'rh_startup_view';
 const STORAGE_KEY_HOME_DEFAULT_TAB = 'rh_home_default_tab';
-const CONCURRENCY_OPTIONS = [1, 3, 5, 20] as const;
 
 type AppView = 'home' | 'workspace' | 'multitask' | 'tools';
 type StartupView = Exclude<AppView, 'tools'>;
@@ -48,10 +48,11 @@ const normalizeApiKeyEntry = (entry?: Partial<ApiKeyEntry> | null): ApiKeyEntry 
   return {
     id: entry?.id || crypto.randomUUID(),
     apiKey: typeof entry?.apiKey === 'string' ? entry.apiKey : '',
-    concurrency: CONCURRENCY_OPTIONS.includes(normalizedConcurrency as typeof CONCURRENCY_OPTIONS[number])
-      ? normalizedConcurrency
+    concurrency: Number.isFinite(normalizedConcurrency) && normalizedConcurrency > 0
+      ? Math.floor(normalizedConcurrency)
       : 1,
     accountInfo: entry?.accountInfo ?? null,
+    apiInfo: entry?.apiInfo ?? null,
     loading: entry?.loading,
     error: entry?.error,
   };
@@ -75,7 +76,7 @@ const normalizeStartupView = (value?: string | null): StartupView => {
 };
 
 const normalizeHomeDefaultTab = (value?: string | null): HomeDefaultTab => {
-  if (value === 'official' || value === 'excellent' || value === 'inspiration' || value === 'support') {
+  if (value === 'official' || value === 'support') {
     return value;
   }
 
@@ -122,10 +123,24 @@ function App() {
       return normalizeApiKeys(parsed);
     } catch { return [createEmptyApiKeyEntry()]; }
   });
+  const [enterpriseApi, setEnterpriseApi] = useState<ApiKeyEntry>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_ENTERPRISE_API);
+      return normalizeApiKeyEntry(saved ? JSON.parse(saved) : null);
+    } catch {
+      return createEmptyApiKeyEntry();
+    }
+  });
 
   const [isConnected, setIsConnected] = useState(false);
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [webAppInfo, setWebAppInfo] = useState<WebAppInfo | null>(null);
+  const [standardModelConfig, setStandardModelConfig] = useState<StandardModelConfig>({
+    endpoint: '',
+    modelName: null,
+    category: null,
+    outputType: null,
+  });
 
   const [activeDecodeConfig, setActiveDecodeConfig] = useState<DecodeConfig>(() => {
     try {
@@ -144,6 +159,7 @@ function App() {
           || entry.apiKey !== normalizedEntry.apiKey
           || (entry.concurrency || 1) !== normalizedEntry.concurrency
           || (entry.accountInfo ?? null) !== (normalizedEntry.accountInfo ?? null)
+          || (entry.apiInfo ?? null) !== (normalizedEntry.apiInfo ?? null)
           || entry.loading !== normalizedEntry.loading
           || entry.error !== normalizedEntry.error;
       });
@@ -256,6 +272,7 @@ function App() {
   }, []);
 
   const apiKeysList = apiKeys.map(k => k.apiKey).filter(key => key && key.trim());
+  const enterpriseApiKeyList = enterpriseApi.apiKey.trim() ? [enterpriseApi.apiKey.trim()] : [];
 
 
 
@@ -275,16 +292,12 @@ function App() {
     });
   };
 
-  const handleConfigComplete = (newWebappId: string, newNodes: NodeInfo[], newAppInfo: WebAppInfo | null) => {
-    setWebappId(newWebappId);
+  const handleConfigComplete = (newModelConfig: StandardModelConfig, newNodes: NodeInfo[]) => {
+    setStandardModelConfig(newModelConfig);
+    setWebappId(newModelConfig.endpoint);
     setNodes(newNodes);
-    setWebAppInfo(newAppInfo);
+    setWebAppInfo(null);
     setIsConnected(true);
-
-    // Update Recent Apps
-    if (newAppInfo) {
-      addToRecent(newWebappId, newAppInfo.webappName);
-    }
   };
 
   const [batchTaskName, setBatchTaskName] = useState<string>('');
@@ -298,6 +311,17 @@ function App() {
     }
     if (instanceTypeParam) {
       setInstanceType(instanceTypeParam);
+    }
+    if (
+      currentView === 'workspace'
+      && standardModelConfig.endpoint
+      && runType === 'single'
+      && (!batchList || batchList.length === 0)
+      && stepRunningRef.current
+    ) {
+      stepRunningRef.current.submitAdditionalTask(updatedNodes);
+      setBatchTaskName('');
+      return;
     }
     if (batchList && batchList.length > 0) {
       setActiveBatchList(batchList);
@@ -323,6 +347,10 @@ function App() {
       status: 'SUCCESS'
     };
     setHistory(prev => [newItem, ...prev]);
+
+    if (currentView === 'workspace' && standardModelConfig.endpoint) {
+      return;
+    }
 
     // Switch to result view
     setRunType('result');
@@ -360,6 +388,16 @@ function App() {
     } else {
       // 如果不保存，则清除 localStorage 中已保存的 API Keys
       localStorage.removeItem(STORAGE_KEY_API_KEYS);
+    }
+  };
+
+  const handleUpdateEnterpriseApi = (newKey: ApiKeyEntry, saveToStorage: boolean = true) => {
+    const normalizedKey = normalizeApiKeyEntry(newKey);
+    setEnterpriseApi(normalizedKey);
+    if (saveToStorage) {
+      localStorage.setItem(STORAGE_KEY_ENTERPRISE_API, JSON.stringify(normalizedKey));
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ENTERPRISE_API);
     }
   };
 
@@ -440,7 +478,7 @@ function App() {
 
   const tabs: { id: AppView; label: string; icon: React.FC<any> }[] = [
     { id: 'home', label: '首页', icon: Home },
-    { id: 'workspace', label: '单任务模式', icon: Briefcase },
+    { id: 'workspace', label: '标准模型 API', icon: Briefcase },
     { id: 'multitask', label: '多任务模式', icon: Layers },
     { id: 'tools', label: '设置', icon: Settings },
   ];
@@ -451,7 +489,7 @@ function App() {
       <header className="bg-white dark:bg-[#0F1115] border-b border-slate-200 dark:border-slate-800/50 h-14 flex items-center justify-between pr-4 shrink-0 z-20 shadow-sm">
         <div className="flex items-center h-full gap-3">
           <img src="/r.png" alt="RunningHub" className="h-10 w-auto ml-2" />
-          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.6.3</span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.6.4</span>
           <button
             onClick={handleOpenAbout}
             className="ml-2 px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"
@@ -503,7 +541,6 @@ function App() {
             {currentView === 'home' && (
               <HomeView
                 onSelectApp={handleSelectApp}
-                apiKeys={apiKeysList}
                 favorites={favorites}
                 onToggleFavorite={handleToggleFavorite}
                 defaultTab={homeDefaultTab}
@@ -546,19 +583,10 @@ function App() {
                   <StepConfig
                     onNext={handleConfigComplete}
                     initialWebappId={webappId}
-                    apiKeys={apiKeys}
+                    enterpriseApi={enterpriseApi}
+                    onOpenSettings={() => setShowSettings(true)}
                     autoSaveConfig={autoSaveConfig}
                     onAutoSaveChange={handleUpdateAutoSave}
-                    recentApps={recentApps}
-                    onSelectRecent={(app) => {
-                      // Just update the input in StepConfig, handled locally via props if needed,
-                      // BUT StepConfig maintains its own webappId state.
-                      // We actually need to pass a way to set it, OR StepConfig will read from props.
-                      // StepConfig has `initialWebappId` but that's only for init.
-                      // We might need to force update it.
-                      // Actually, let's keep it simple: We just pass recentApps to StepConfig.
-                      // StepConfig will handle the click to fill its own input.
-                    }}
                   />
                 </div>
 
@@ -566,7 +594,7 @@ function App() {
                 <div className="w-[450px] bg-slate-50/50 dark:bg-[#0F1115] border-r border-slate-200 dark:border-slate-800/50 flex flex-col shrink-0 relative transition-colors duration-300">
                   <StepEditor
                     nodes={nodes}
-                    apiKeys={apiKeysList}
+                    apiKeys={enterpriseApiKeyList}
                     isConnected={isConnected}
                     runType={runType}
                     webAppInfo={webAppInfo}
@@ -574,6 +602,8 @@ function App() {
                     onRun={handleRun}
                     onCancel={handleCancelRun}
                     decodeConfig={activeDecodeConfig}
+                    mode="standard"
+                    standardModelConfig={standardModelConfig}
                     failedBatchIndices={failedBatchIndices}
                     instanceType={instanceType}
                     onInstanceTypeChange={setInstanceType}
@@ -597,8 +627,9 @@ function App() {
                   {(runType === 'single' || runType === 'batch') ? (
                     <StepRunning
                       ref={stepRunningRef}
-                      apiConfigs={apiKeys.map(k => ({ apiKey: k.apiKey, concurrency: k.concurrency || 1 }))}
+                      apiConfigs={enterpriseApi.apiKey.trim() ? [{ apiKey: enterpriseApi.apiKey.trim(), concurrency: enterpriseApi.concurrency || 1 }] : []}
                       webappId={webappId}
+                      standardModelConfig={standardModelConfig}
                       nodes={nodes}
                       batchList={activeBatchList}
                       pendingFiles={activePendingFiles}
@@ -635,7 +666,9 @@ function App() {
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         apiKeys={apiKeys}
+        enterpriseApi={enterpriseApi}
         onUpdateApiKeys={handleUpdateApiKeys}
+        onUpdateEnterpriseApi={handleUpdateEnterpriseApi}
         autoSaveConfig={autoSaveConfig}
         onUpdateAutoSave={handleUpdateAutoSave}
       />

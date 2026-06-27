@@ -1,14 +1,19 @@
 {
-  "name": "runninghub-ai-客户端1.6.3",
+  "name": "runninghub-ai-客户端1.6.4",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:mac": "tauri build",
+    "tauri:build:windows:x64": "tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc",
+    "build:windows:x64": "tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc"
   },
   "dependencies": {
     "lucide-react": "^0.562.0",
