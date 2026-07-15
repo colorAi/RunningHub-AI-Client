@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Coins, Key, Loader2, Plus, RefreshCw, Save, Trash2, User, X } from 'lucide-react';
-import { ApiInfo, ApiKeyEntry, AutoSaveConfig } from '../types';
+import { Check, Coins, Globe2, Key, Loader2, Plus, RefreshCw, Save, Trash2, User, X } from 'lucide-react';
+import { ApiInfo, ApiKeyEntry, AutoSaveConfig, RunningHubRegionMode } from '../types';
 import { getApiInfo } from '../services/api';
+import {
+  getRunningHubRegionLabel,
+  getRunningHubRegionMode,
+  setRunningHubRegionMode,
+} from '../services/runningHubRegion';
 
 const STORAGE_KEY_SAVE_API = 'rh_save_api_enabled';
 
@@ -75,7 +80,14 @@ const AccountCards: React.FC<{ entry: ApiKeyEntry; title: string }> = ({ entry, 
       <div className="mb-2.5 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-slate-800 dark:text-white">{title}</div>
-          <div className="mt-1 truncate text-xs text-slate-400 dark:text-slate-500">{maskApiKey(entry.apiKey)}</div>
+          <div className="mt-1 flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+            <span className="truncate">{maskApiKey(entry.apiKey)}</span>
+            {info?.region && (
+              <span className="shrink-0 rounded bg-brand-50 px-1.5 py-0.5 font-medium text-brand-600 dark:bg-brand-900/20 dark:text-brand-300">
+                {getRunningHubRegionLabel(info.region)}
+              </span>
+            )}
+          </div>
         </div>
         <div className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm dark:border-slate-700 dark:bg-[#0F1115] dark:text-slate-300">
           <span className="text-[10px] text-slate-400 dark:text-slate-500">并发</span>
@@ -124,12 +136,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [loadingAny, setLoadingAny] = useState(false);
   const [saveApiKeyEnabled, setSaveApiKeyEnabled] = useState(() => localStorage.getItem(STORAGE_KEY_SAVE_API) === 'true');
+  const [regionMode, setRegionMode] = useState<RunningHubRegionMode>(() => getRunningHubRegionMode());
 
   const entries = ensureApiEntries(apiKeys);
   const enterpriseEntry = ensureEntry(enterpriseApi);
   const configuredEntries = entries.filter(entry => entry.apiKey.trim());
   const totalConsumerConcurrency = configuredEntries.reduce((sum, entry) => sum + (entry.concurrency || 1), 0);
   const enterpriseConcurrency = enterpriseEntry.apiKey.trim() ? enterpriseEntry.concurrency || 1 : 0;
+
+  const handleRegionModeChange = (mode: RunningHubRegionMode) => {
+    setRegionMode(mode);
+    setRunningHubRegionMode(mode);
+    localStorage.removeItem('rh_official_apps_cache');
+    localStorage.removeItem('rh_official_apps_cache_cn');
+    localStorage.removeItem('rh_official_apps_cache_global');
+  };
 
   const updateEntries = (updater: (currentEntries: ApiKeyEntry[]) => ApiKeyEntry[], saveToStorage = saveApiKeyEnabled) => {
     onUpdateApiKeys(ensureApiEntries(updater(entries)), saveToStorage);
@@ -274,6 +295,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     <Plus className="h-4 w-4" />
                     新增消费 API
                   </button>
+                </div>
+
+                <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#0F1115]">
+                  <div className="mb-2 flex items-center gap-2">
+                    <Globe2 className="h-4 w-4 text-brand-500" />
+                    <span className="text-sm font-semibold text-slate-800 dark:text-white">RunningHub 站点</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+                    {([
+                      ['auto', '自动识别'],
+                      ['cn', '国内站'],
+                      ['global', '海外站'],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => handleRegionModeChange(value)}
+                        className={`rounded-md px-2 py-1.5 text-xs font-medium transition ${regionMode === value
+                          ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-brand-300'
+                          : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-400 dark:text-slate-500">
+                    {regionMode === 'auto'
+                      ? '会通过只读队列接口判断 API Key 所属站点；粘贴 .cn / .ai 应用链接时也会自动识别。'
+                      : `已强制所有请求使用${regionMode === 'cn' ? '国内站' : '海外站'}，可随时切回自动。`}
+                  </p>
                 </div>
 
                 <div className="mb-3 flex gap-2">

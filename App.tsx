@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { Home, Briefcase, Settings, User, Layers } from 'lucide-react';
+import { Home, Briefcase, Settings, User, Layers, Languages } from 'lucide-react';
 import type { StepRunningRef } from './components/StepRunning';
 import SettingsModal from './components/SettingsModal';
 import DecodeSettingsModal from './components/DecodeSettingsModal';
@@ -8,6 +8,7 @@ import TermsModal from './components/TermsModal';
 import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, DecodeConfig, HistoryItem, RecentApp, FailedTaskInfo, InstanceType, HomeDefaultTab, StandardModelConfig } from './types';
 import { saveMultipleFiles, getDirectoryName, initAutoSave, checkDirectoryAccess, getCurrentDirectoryPath } from './services/autoSaveService';
 import { DEFAULT_DECODE_CONFIG, normalizeDecodeConfig } from './utils/decodeConfig';
+import { useLanguage } from './services/i18n';
 
 const HomeView = lazy(() => import('./components/HomeView'));
 const StepConfig = lazy(() => import('./components/StepConfig'));
@@ -90,6 +91,7 @@ const viewLoadingFallback = (
 );
 
 function App() {
+  const { language, toggleLanguage, text } = useLanguage();
   // Global View State
   const [startupView, setStartupView] = useState<StartupView>(() => {
     try {
@@ -477,10 +479,10 @@ function App() {
   };
 
   const tabs: { id: AppView; label: string; icon: React.FC<any> }[] = [
-    { id: 'home', label: '首页', icon: Home },
-    { id: 'workspace', label: '标准模型 API', icon: Briefcase },
-    { id: 'multitask', label: '多任务模式', icon: Layers },
-    { id: 'tools', label: '设置', icon: Settings },
+    { id: 'home', label: text('首页', 'Home'), icon: Home },
+    { id: 'workspace', label: text('标准模型 API', 'Model API'), icon: Briefcase },
+    { id: 'multitask', label: text('多任务模式', 'Multi-task'), icon: Layers },
+    { id: 'tools', label: text('设置', 'Settings'), icon: Settings },
   ];
 
   return (
@@ -489,7 +491,7 @@ function App() {
       <header className="bg-white dark:bg-[#0F1115] border-b border-slate-200 dark:border-slate-800/50 h-14 flex items-center justify-between pr-4 shrink-0 z-20 shadow-sm">
         <div className="flex items-center h-full gap-3">
           <img src="/r.png" alt="RunningHub" className="h-10 w-auto ml-2" />
-          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">RH客户端( H 版 ) v1.6.4</span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">{text('RH客户端( H 版 ) v1.6.5', 'RH Client (H Edition) v1.6.5')}</span>
           <button
             onClick={handleOpenAbout}
             className="ml-2 px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"
@@ -501,6 +503,17 @@ function App() {
         <div className="flex items-center gap-4">
           {/* Navigation Tabs */}
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={toggleLanguage}
+              data-i18n-ignore="true"
+              aria-label={language === 'zh' ? 'Switch to English' : '切换到中文'}
+              title={language === 'zh' ? 'Switch to English' : '切换到中文'}
+              className="mr-1 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-brand-600 dark:text-slate-400 dark:hover:bg-slate-800/50 dark:hover:text-brand-400"
+            >
+              <Languages className="h-4 w-4" />
+              <span>{language === 'zh' ? 'EN' : '中文'}</span>
+            </button>
             {tabs.map((tab) => {
               const isActive = currentView === tab.id;
               const Icon = tab.icon;
@@ -528,7 +541,7 @@ function App() {
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-brand-600 dark:hover:text-brand-400 transition-colors text-sm"
           >
             <User className="w-4 h-4" />
-            <span>个人中心</span>
+            <span>{text('个人中心', 'Account')}</span>
           </button>
         </div>
       </header>

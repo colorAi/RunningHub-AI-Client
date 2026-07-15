@@ -6,6 +6,7 @@ import { executeWorkflowTask, TaskCancelledError, TaskUsageStats } from '../serv
 import MultiTaskCard, { MultiTaskCardData, MultiTaskCardRunState } from './multitask/MultiTaskCard';
 import { StepEditorRef, StepEditorSnapshot } from './StepEditor';
 import { ApiKeyEntry, AutoSaveConfig, DecodeConfig, Favorite, InstanceType, NodeInfo, PendingFilesMap, RecentApp, WebAppInfo } from '../types';
+import { parseRunningHubAppInput } from '../services/runningHubRegion';
 
 interface MultiTaskViewProps {
   apiKeys: ApiKeyEntry[];
@@ -419,8 +420,7 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
   const handleLoadCard = async (cardId: string, forcedId?: string) => {
     const targetCard = cards.find(card => card.id === cardId);
     const rawWebappId = (forcedId ?? targetCard?.webappId ?? '').trim();
-    const urlMatch = rawWebappId.match(/\/ai-detail\/(\d+)/);
-    const normalizedWebappId = urlMatch ? urlMatch[1] : rawWebappId;
+    const normalizedWebappId = parseRunningHubAppInput(rawWebappId).appId;
     const primaryApiKey = validApiKeys[0] || '';
 
     if (!primaryApiKey || !normalizedWebappId) {
@@ -440,7 +440,7 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
     }));
 
     try {
-      const result = await getNodeList(primaryApiKey, normalizedWebappId);
+      const result = await getNodeList(primaryApiKey, rawWebappId);
       updateCard(cardId, card => ({
         ...card,
         webappId: normalizedWebappId,

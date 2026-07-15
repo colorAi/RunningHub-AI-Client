@@ -12,7 +12,7 @@ interface StepConfigProps {
   onAutoSaveChange: (config: AutoSaveConfig) => void;
 }
 
-const MODEL_TYPE_ORDER = ['image', 'video', 'audio', 'string', '3d', 'file'];
+const MODEL_TYPE_ORDER: RunningHubStandardModel['outputType'][] = ['image', 'video', 'audio', 'string', '3d', 'file'];
 const modelRegistryCache = new Map<string, RunningHubStandardModel[]>();
 const DEFAULT_REGISTRY_CACHE_KEY = 'default';
 
@@ -46,7 +46,7 @@ const StepConfig: React.FC<StepConfigProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const modelTypes = useMemo(
-    () => Array.from(new Set(models.map(model => model.outputType)))
+    () => Array.from(new Set<RunningHubStandardModel['outputType']>(models.map(model => model.outputType)))
       .sort((left, right) => {
         const leftIndex = MODEL_TYPE_ORDER.indexOf(left);
         const rightIndex = MODEL_TYPE_ORDER.indexOf(right);

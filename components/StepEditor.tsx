@@ -397,7 +397,7 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
         const getMediaSrc = (value: string) => {
             if (!value) return '';
             // Use buildFileUrl to convert filename to full URL
-            return buildFileUrl(value);
+            return buildFileUrl(value, primaryApiKey);
         };
         const mediaSrc = previewUrl || (node.fieldValue ? getMediaSrc(node.fieldValue) : '');
         const showVideoPreview = effectiveType === 'VIDEO' && !!mediaSrc && !brokenVideos[key];

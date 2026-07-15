@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { LanguageProvider } from './services/i18n';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -15,5 +16,7 @@ const Component = (App as any).default ? (App as any).default : App;
 
 // Note: StrictMode removed to prevent double task submission in development
 root.render(
-  <Component />
+  <LanguageProvider>
+    <Component />
+  </LanguageProvider>
 );

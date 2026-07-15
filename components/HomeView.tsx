@@ -3,6 +3,11 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { Globe, RefreshCw, Heart, MousePointerClick, Star, Play, Loader2, User, Search, X, Github, ExternalLink, Gift, Users, Coffee } from 'lucide-react';
 import { NodeInfo, WebAppInfo, Favorite, HomeDefaultTab } from '../types';
 import { getOfficialAppList, AppListItem } from '../services/api';
+import {
+    getPreferredRunningHubRegion,
+    getRunningHubHost,
+    RUNNING_HUB_REGION_CHANGE_EVENT,
+} from '../services/runningHubRegion';
 
 interface HomeViewProps {
     onSelectApp: (appId: string, preloadedData?: { nodes: NodeInfo[], appInfo: WebAppInfo }) => void;
@@ -27,12 +32,19 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, favorites, onToggleFav
     const [currentPage, setCurrentPage] = useState(1);
     const [totalApps, setTotalApps] = useState(0);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [regionRevision, setRegionRevision] = useState(0);
+
+    useEffect(() => {
+        const handleRegionChange = () => setRegionRevision(value => value + 1);
+        window.addEventListener(RUNNING_HUB_REGION_CHANGE_EVENT, handleRegionChange);
+        return () => window.removeEventListener(RUNNING_HUB_REGION_CHANGE_EVENT, handleRegionChange);
+    }, []);
 
     useEffect(() => {
         if (activeTab === 'official') {
             loadOfficialApps(true);
         }
-    }, [activeTab, sortOrder]);
+    }, [activeTab, sortOrder, regionRevision]);
 
 
     useEffect(() => {
@@ -53,7 +65,8 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, favorites, onToggleFav
         try {
             if (isDefaultFetch && !forceRefresh && localStorage.getItem('rh_refresh_store_startup') === 'false') {
                 try {
-                    const cached = localStorage.getItem('rh_official_apps_cache');
+                    const cacheKey = `rh_official_apps_cache_${getPreferredRunningHubRegion()}`;
+                    const cached = localStorage.getItem(cacheKey);
                     if (cached) {
                         const parsedCache = JSON.parse(cached);
                         if (parsedCache?.records?.length > 0) {
@@ -74,7 +87,8 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, favorites, onToggleFav
                 setOfficialApps(res.records);
                 setCurrentPage(1);
                 if (isDefaultFetch) {
-                    localStorage.setItem('rh_official_apps_cache', JSON.stringify({ records: res.records, total: res.total }));
+                    const cacheKey = `rh_official_apps_cache_${getPreferredRunningHubRegion()}`;
+                    localStorage.setItem(cacheKey, JSON.stringify({ records: res.records, total: res.total }));
                 }
             } else {
                 setOfficialApps(prev => [...prev, ...res.records]);
@@ -430,7 +444,7 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, favorites, onToggleFav
 
                                     {/* Register & Gift */}
                                     <a
-                                        href="https://www.runninghub.cn/?inviteCode=rh-v1123"
+                                        href={`${getRunningHubHost(getPreferredRunningHubRegion())}/?inviteCode=rh-v1123`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="group relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-brand-500 p-5 shadow-md hover:shadow-lg hover:-translate-y-1 transition-all duration-300"

@@ -1,8 +1,8 @@
 {
-  "name": "runninghub-ai-客户端1.6.4",
+  "name": "runninghub-ai-客户端1.6.5",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "type": "module",
   "scripts": {
     "dev": "vite",

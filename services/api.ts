@@ -13,10 +13,17 @@ import {
   TaskRuntimeStatus,
   UploadData,
   WebAppInfo,
+  RunningHubRegion,
 } from '../types';
+import {
+  getPreferredRunningHubRegion,
+  getResolvedRunningHubRegion,
+  getRunningHubHost,
+  parseRunningHubAppInput,
+  rememberRunningHubRegion,
+  resolveRunningHubRegion,
+} from './runningHubRegion';
 
-const API_HOST = 'https://www.runninghub.cn';
-export const DEFAULT_STANDARD_MODEL_BASE_URL = `${API_HOST}/openapi/v2`;
 export const DEFAULT_STANDARD_MODEL_REGISTRY_URL = 'https://raw.githubusercontent.com/HM-RunningHub/ComfyUI_RH_OpenAPI/main/models_registry.json';
 
 const RH_ERROR_MESSAGES: Record<string, string> = {
@@ -247,10 +254,10 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export const buildFileUrl = (value: string): string => {
+export const buildFileUrl = (value: string, apiKey?: string): string => {
   if (!value) return '';
   if (/^(https?:\/\/|data:)/i.test(value)) return value;
-  return `https://www.runninghub.cn/task/openapi/view/${value}`;
+  return `${getRunningHubHost(getResolvedRunningHubRegion(apiKey))}/task/openapi/view/${value}`;
 };
 
 export interface GetNodeListResult {
@@ -259,7 +266,9 @@ export interface GetNodeListResult {
 }
 
 export const getNodeList = async (apiKey: string, webappId: string): Promise<GetNodeListResult> => {
-  const url = `${API_HOST}/api/webapp/apiCallDemo?apiKey=${apiKey}&webappId=${webappId}`;
+  const parsedInput = parseRunningHubAppInput(webappId);
+  const region = await resolveRunningHubRegion(apiKey, parsedInput.region);
+  const url = `${getRunningHubHost(region)}/api/webapp/apiCallDemo?apiKey=${encodeURIComponent(apiKey)}&webappId=${encodeURIComponent(parsedInput.appId)}`;
   const response = await fetch(url, {
     method: 'GET',
     headers: {
@@ -273,6 +282,8 @@ export const getNodeList = async (apiKey: string, webappId: string): Promise<Get
   if (json.code !== 0 || !json.data?.nodeInfoList) {
     throw new Error(getRunningHubErrorMessage(json.code, json.msg || 'Failed to fetch node list'));
   }
+
+  rememberRunningHubRegion(apiKey, region);
 
   return {
     nodes: json.data.nodeInfoList.map(normalizeNodeInfo),
@@ -312,7 +323,8 @@ export const fetchWorkflowTemplate = async (
 };
 
 export const uploadMediaV2 = async (apiKey: string, file: File): Promise<UploadData> => {
-  const url = `${API_HOST}/openapi/v2/media/upload/binary`;
+  const region = await resolveRunningHubRegion(apiKey);
+  const url = `${getRunningHubHost(region)}/openapi/v2/media/upload/binary`;
   const formData = new FormData();
   formData.append('file', file);
 
@@ -337,7 +349,8 @@ export const uploadMediaV2 = async (apiKey: string, file: File): Promise<UploadD
 };
 
 const legacyUploadFile = async (apiKey: string, file: File): Promise<UploadData> => {
-  const url = `${API_HOST}/task/openapi/upload`;
+  const region = await resolveRunningHubRegion(apiKey);
+  const url = `${getRunningHubHost(region)}/task/openapi/upload`;
   const formData = new FormData();
   formData.append('apiKey', apiKey);
   formData.append('fileType', 'input');
@@ -378,9 +391,11 @@ export const submitTask = async (
   nodeInfoList: NodeInfo[],
   instanceType?: InstanceType,
 ): Promise<SubmitTaskData> => {
-  const url = `${API_HOST}/task/openapi/ai-app/run`;
+  const parsedInput = parseRunningHubAppInput(webappId);
+  const region = await resolveRunningHubRegion(apiKey, parsedInput.region);
+  const url = `${getRunningHubHost(region)}/task/openapi/ai-app/run`;
   const payload = {
-    webappId,
+    webappId: parsedInput.appId,
     apiKey,
     nodeInfoList,
     ...(instanceType && { instanceType }),
@@ -461,7 +476,8 @@ export interface QueryTaskResponse extends ApiResponse<TaskOutput[] | any> {
 }
 
 export const queryTaskResultV2 = async (apiKey: string, taskId: string): Promise<QueryTaskResultV2> => {
-  const url = `${API_HOST}/openapi/v2/query`;
+  const region = await resolveRunningHubRegion(apiKey);
+  const url = `${getRunningHubHost(region)}/openapi/v2/query`;
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -490,13 +506,13 @@ export const queryTaskResultV2 = async (apiKey: string, taskId: string): Promise
 };
 
 export const queryTaskOutputs = async (apiKey: string, taskId: string): Promise<QueryTaskResponse> => {
-  const url = `${API_HOST}/task/openapi/outputs`;
+  const region = await resolveRunningHubRegion(apiKey);
+  const url = `${getRunningHubHost(region)}/task/openapi/outputs`;
 
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Host: 'www.runninghub.cn',
       ...buildAuthHeaders(apiKey),
     },
     body: JSON.stringify({ apiKey, taskId }),
@@ -570,20 +586,20 @@ export const queryTaskResult = async (apiKey: string, taskId: string): Promise<Q
   }
 };
 
-export const getAccountInfo = async (apiKey: string): Promise<{
+export const getAccountInfo = async (apiKey: string, resolvedRegion?: RunningHubRegion): Promise<{
   remainCoins: string;
   currentTaskCounts: string;
   remainMoney: string | null;
   currency: string | null;
   apiType: string;
 }> => {
-  const url = `${API_HOST}/uc/openapi/accountStatus`;
+  const region = resolvedRegion || await resolveRunningHubRegion(apiKey);
+  const url = `${getRunningHubHost(region)}/uc/openapi/accountStatus`;
 
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Host: 'www.runninghub.cn',
       ...buildAuthHeaders(apiKey),
     },
     body: JSON.stringify({ apikey: apiKey }),
@@ -606,8 +622,9 @@ export const getAccountInfo = async (apiKey: string): Promise<{
   return json.data;
 };
 
-export const getApiQueueStatus = async (apiKey: string): Promise<ApiQueueStatus> => {
-  const response = await fetch(`${API_HOST}/openapi/v2/queue/status`, {
+export const getApiQueueStatus = async (apiKey: string, resolvedRegion?: RunningHubRegion): Promise<ApiQueueStatus> => {
+  const region = resolvedRegion || await resolveRunningHubRegion(apiKey);
+  const response = await fetch(`${getRunningHubHost(region)}/openapi/v2/queue/status`, {
     method: 'GET',
     headers: buildAuthHeaders(apiKey),
   });
@@ -628,10 +645,13 @@ export const getApiQueueStatus = async (apiKey: string): Promise<ApiQueueStatus>
 };
 
 export const getApiInfo = async (apiKey: string): Promise<ApiInfo> => {
+  const region = await resolveRunningHubRegion(apiKey);
   const [account, queue] = await Promise.all([
-    getAccountInfo(apiKey),
-    getApiQueueStatus(apiKey),
+    getAccountInfo(apiKey, region),
+    getApiQueueStatus(apiKey, region),
   ]);
+
+  rememberRunningHubRegion(apiKey, region);
 
   return {
     account: {
@@ -639,6 +659,7 @@ export const getApiInfo = async (apiKey: string): Promise<ApiInfo> => {
       apiType: queue.apiKeyType || account.apiType,
     },
     queue,
+    region,
   };
 };
 
@@ -702,7 +723,7 @@ export const fetchStandardModelPricePreview = async (
   apiKey: string,
   endpoint: string,
   nodesOrPayload: NodeInfo[] | Record<string, unknown>,
-  baseUrl = DEFAULT_STANDARD_MODEL_BASE_URL,
+  baseUrl?: string,
   signal?: AbortSignal,
 ): Promise<RunningHubModelPricePreview> => {
   const normalizedEndpoint = endpoint.trim().replace(/^\/+/, '');
@@ -714,7 +735,8 @@ export const fetchStandardModelPricePreview = async (
     ? buildStandardModelPayload(nodesOrPayload)
     : nodesOrPayload;
 
-  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/price-preview/${normalizedEndpoint}`, {
+  const resolvedBaseUrl = baseUrl || `${getRunningHubHost(await resolveRunningHubRegion(apiKey))}/openapi/v2`;
+  const response = await fetch(`${resolvedBaseUrl.replace(/\/+$/, '')}/price-preview/${normalizedEndpoint}`, {
     method: 'POST',
     signal,
     headers: {
@@ -755,7 +777,7 @@ export const submitStandardModelTask = async (
   apiKey: string,
   endpoint: string,
   nodesOrPayload: NodeInfo[] | Record<string, unknown>,
-  baseUrl = DEFAULT_STANDARD_MODEL_BASE_URL,
+  baseUrl?: string,
 ): Promise<SubmitTaskData> => {
   const normalizedEndpoint = endpoint.trim().replace(/^\/+/, '');
   if (!normalizedEndpoint) {
@@ -766,7 +788,8 @@ export const submitStandardModelTask = async (
     ? buildStandardModelPayload(nodesOrPayload)
     : nodesOrPayload;
 
-  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/${normalizedEndpoint}`, {
+  const resolvedBaseUrl = baseUrl || `${getRunningHubHost(await resolveRunningHubRegion(apiKey))}/openapi/v2`;
+  const response = await fetch(`${resolvedBaseUrl.replace(/\/+$/, '')}/${normalizedEndpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -846,7 +869,7 @@ export const getOfficialAppList = async (
   records: AppListItem[];
   total: number;
 }> => {
-  const url = `${API_HOST}/api/webapp/list`;
+  const url = `${getRunningHubHost(getPreferredRunningHubRegion())}/api/webapp/list`;
   const body: JsonRecord = {
     current: page,
     size,
@@ -879,11 +902,13 @@ export const getOfficialAppList = async (
 };
 
 export const getAppDetailById = async (appId: string): Promise<AppListItem | null> => {
-  const url = `${API_HOST}/api/webapp/list`;
+  const parsedInput = parseRunningHubAppInput(appId);
+  const region = parsedInput.region || getPreferredRunningHubRegion();
+  const url = `${getRunningHubHost(region)}/api/webapp/list`;
   const body = {
     current: 1,
     size: 1,
-    search: appId,
+    search: parsedInput.appId,
   };
 
   try {
@@ -902,7 +927,7 @@ export const getAppDetailById = async (appId: string): Promise<AppListItem | nul
     }
 
     const app = normalizeAppListItem(json.data.records[0]);
-    return app.id === appId ? app : null;
+    return app.id === parsedInput.appId ? app : null;
   } catch {
     return null;
   }

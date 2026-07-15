@@ -108,7 +108,12 @@ export interface ApiQueueStatus {
 export interface ApiInfo {
   account: AccountInfo;
   queue: ApiQueueStatus;
+  region: RunningHubRegion;
 }
+
+export type RunningHubRegion = 'cn' | 'global';
+
+export type RunningHubRegionMode = 'auto' | RunningHubRegion;
 
 export interface ApiKeyConfig {
   apiKey: string;

@@ -13,6 +13,7 @@ import { ApiKeyEntry, AutoSaveConfig, DecodeConfig, InstanceType, NodeInfo, Task
 import { fetchWorkflowTemplate, queryTaskResult, submitTask, uploadFile } from '../../services/api';
 import { connectTaskProgress } from '../../services/taskProgress';
 import { getSwitchFieldConfig, parseListOptions } from '../../utils/nodeUtils';
+import { parseRunningHubAppInput } from '../../services/runningHubRegion';
 
 export interface AppNodeData {
   id: string;
@@ -144,8 +145,10 @@ const AppNode: React.FC<AppNodeProps> = ({
       if (!mountedRef.current) return;
 
       if (result.success && result.data) {
+        const normalizedAppId = parseRunningHubAppInput(inputValue).appId;
+        setInputValue(normalizedAppId);
         onUpdate(id, {
-          webappId: inputValue.trim(),
+          webappId: normalizedAppId,
           webAppInfo: result.data.appInfo,
           nodes: result.data.nodes,
           isLoading: false,
@@ -456,7 +459,7 @@ const AppNode: React.FC<AppNodeProps> = ({
                 }}
                 onClick={event => event.stopPropagation()}
                 className="flex-1 px-2 py-0.5 text-xs bg-white dark:bg-[#0F1115] border border-slate-300 dark:border-slate-600 rounded"
-                placeholder="输入应用 ID"
+                placeholder="输入应用 ID 或 .cn / .ai 应用链接"
               />
               <button
                 onClick={event => {

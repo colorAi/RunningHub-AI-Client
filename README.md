@@ -14,6 +14,9 @@ For commercial licensing or secondary development authorization, please contact 
 
 ## 📅 Changelog
 
+### v1.6.5
+- RH site separation adaptation; added English UI language.
+
 ### v1.6.4
 - **⚡ RunningHub Standard Model API**: Added enterprise shared API settings, automatic concurrency detection, standard model registry loading, parameter loading, price preview, and continuous submit support.
 - **🧹 UI Cleanup**: Removed short drama startup mode, hid excellent UP recommendations, removed friend links, and tightened API slot layout.
@@ -144,6 +147,9 @@ Modified versions that are distributed or offered for remote network use must ma
 商用授权、二次开发授权请联系 QQ 409993197（注明来意）。
 
 ## 📅 更新日志 (Changelog)
+
+### v1.6.5
+- RH站点隔离适配，增加英文界面语言。
 
 ### v1.6.4
 - **⚡ RunningHub 标准模型 API**: 新增企业共享 API 设置、自动获取并发数、模型注册表加载、参数加载、价格预估和运行中继续提交。

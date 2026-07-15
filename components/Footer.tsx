@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useLanguage } from '../services/i18n';
 
 const Footer: React.FC = () => {
+    const { language } = useLanguage();
     const [time, setTime] = useState(new Date());
     const [quote, setQuote] = useState<string>('行路难，行路难，多歧路，今安在。');
 
@@ -34,7 +36,7 @@ const Footer: React.FC = () => {
 
     // Formatters
     const formatDate = (date: Date) => {
-        return date.toLocaleDateString('zh-CN', {
+        return date.toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN', {
             year: 'numeric',
             month: 'long',
             day: 'numeric',
@@ -50,17 +52,21 @@ const Footer: React.FC = () => {
     };
 
     const formatTime = (date: Date) => {
-        return date.toLocaleTimeString('zh-CN', {
+        return date.toLocaleTimeString(language === 'en' ? 'en-GB' : 'zh-CN', {
             hour12: false,
         });
     };
+
+    const displayQuote = language === 'en'
+        ? 'The journey is difficult, but the road ahead is still ours to explore.'
+        : quote;
 
     return (
         <footer className="h-8 border-t border-slate-200 dark:border-slate-800/50 bg-white dark:bg-[#161920] flex items-center justify-between px-12 text-xs text-slate-400 shrink-0 select-none">
 
             {/* Left: Quote */}
-            <div className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left mr-4" title={quote}>
-                <span className="italic opacity-80">{quote}</span>
+            <div className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left mr-4" title={displayQuote}>
+                <span className="italic opacity-80">{displayQuote}</span>
             </div>
 
             {/* Center: Copyright */}
@@ -71,7 +77,7 @@ const Footer: React.FC = () => {
             {/* Right: Info */}
             <div className="flex-1 flex justify-end gap-3 items-center overflow-hidden whitespace-nowrap ml-4">
                 <span>{formatDate(time)}</span>
-                <span className="opacity-80 font-serif">农历 {formatLunar(time)}</span>
+                {language === 'zh' && <span className="opacity-80 font-serif">农历 {formatLunar(time)}</span>}
                 <span className="font-mono">{formatTime(time)}</span>
             </div>
         </footer>
