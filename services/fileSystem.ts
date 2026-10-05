@@ -4,8 +4,8 @@
  * 
  * 提供统一的文件系统接口，自动适配不同运行环境：
  * - Tauri 桌面应用：使用原生 API
- * - Windows/Linux 浏览器：使用 File System Access API
- * - macOS 浏览器：不支持，提示使用桌面版
+ * - 支持目录选择的浏览器（包括 macOS Chromium）：使用 File System Access API
+ * - 其他浏览器：提示使用支持目录选择的浏览器或桌面版
  */
 
 import { 
@@ -36,95 +36,32 @@ export type DirectoryHandle = FileSystemDirectoryHandle | TauriDirectoryHandle;
 export type FileHandle = FileSystemFileHandle | TauriFileHandle;
 
 /**
- * 检查是否为 macOS 系统
- */
-const isMacOS = (): boolean => detectOS() === 'macos';
-
-/**
- * 检查是否为 Windows 系统
- */
-const isWindows = (): boolean => detectOS() === 'windows';
-
-// ============================================================================
-// 核心功能 - 目录选择
-// ============================================================================
-
-/**
- * 选择根目录
- * 根据环境自动选择最佳实现方式
- * 
- * @returns 目录句柄（TauriDirectoryHandle 或 FileSystemDirectoryHandle）或 null
+ * Prefer native dialogs in Tauri; browsers are selected by capability, never OS.
+ * Keep the picker call before any await so the button's user activation is retained.
+ * Cancellation returns null, while actionable errors are reported to the caller.
  */
 export const selectRootDirectory = async (): Promise<DirectoryHandle | null> => {
-  const os = detectOS();
-  const inTauri = isTauriEnvironment();
-  const supportsWebFS = supportsFileSystemAccessAPI();
-  
-  console.log('[Platform] ========== 系统检测 ==========');
-  console.log('[Platform] 操作系统:', os);
-  console.log('[Platform] Tauri 环境:', inTauri);
-  console.log('[Platform] WebFS 支持:', supportsWebFS);
-  console.log('[Platform] =================================');
-  
-  // ========== Tauri 桌面应用策略 ==========
-  if (inTauri) {
-    console.log('[Platform] Tauri 环境检测到 - 使用原生对话框');
-    
-    try {
-      const handle = await selectDirectoryWithTauri();
-      if (handle) {
-        console.log('[Platform] Tauri 目录选择成功:', handle.name);
-      }
-      return handle;
-    } catch (e) {
-      console.error('[Platform] Tauri 选择失败:', e);
-      return null;
+  if (isTauriEnvironment()) return selectDirectoryWithTauri();
+
+  if (!supportsFileSystemAccessAPI()) {
+    throw new Error('当前浏览器或页面环境不支持选择文件夹，请使用最新版 Chrome、Edge 或桌面应用，并通过 HTTPS 或本机地址打开。');
+  }
+
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const permission = await handle.requestPermission({ mode: 'readwrite' });
+    if (permission !== 'granted') {
+      throw new Error('未获得文件夹写入权限，请重新选择目录并允许读写。');
     }
-  }
-  
-  // ========== macOS 浏览器策略 ==========
-  if (isMacOS()) {
-    console.log('[Platform] macOS 浏览器检测到 - 不支持 File System Access API');
-    
-    alert('🍎 macOS 系统提示\n\n' +
-          '当前浏览器不支持文件夹访问功能。\n\n' +
-          '请使用桌面应用版本：\n' +
-          '1. 下载 H-set 桌面版 App\n' +
-          '2. 或在 Windows 系统上使用 Chrome/Edge 浏览器');
-    return null;
-  }
-  
-  // ========== Windows/Linux 浏览器策略 ==========
-  console.log('[Platform] 浏览器环境 - 尝试 Web API');
-  
-  if (supportsWebFS) {
-    try {
-      const handle = await (window as any).showDirectoryPicker({
-        mode: 'readwrite'
-      });
-      
-      const permission = await handle.requestPermission({ mode: 'readwrite' });
-      if (permission !== 'granted') {
-        alert('需要读写权限才能正常使用应用。请重新选择目录并授予权限。');
-        return null;
-      }
-      
-      console.log('[Platform] Web API 目录选择成功');
-      return handle as FileSystemDirectoryHandle;
-    } catch (e) {
-      console.error("User cancelled or failed to select folder", e);
-      return null;
+    return handle;
+  } catch (error) {
+    const name = (error as { name?: string })?.name;
+    if (name === 'AbortError') return null;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      throw new Error('浏览器未允许访问文件夹，请在本机地址或 HTTPS 页面中点击“选择目录”，并允许读写。');
     }
+    throw error;
   }
-  
-  // ========== 不支持的环境 ==========
-  alert('⚠️ 不支持的操作系统或浏览器\n\n' +
-        '您的系统：' + os + '\n' +
-        'platform: ' + navigator.platform + '\n\n' +
-        '支持的平台：\n' +
-        '• macOS: 使用桌面应用版本\n' +
-        '• Windows: 使用 Chrome/Edge 浏览器或桌面应用');
-  return null;
 };
 
 // ============================================================================

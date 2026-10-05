@@ -50,7 +50,9 @@ export const isTauriEnvironment = (): boolean => {
  * 检测浏览器是否支持 File System Access API
  */
 export const supportsFileSystemAccessAPI = (): boolean => {
-  return 'showDirectoryPicker' in window;
+  return typeof window !== 'undefined'
+    && window.isSecureContext
+    && typeof window.showDirectoryPicker === 'function';
 };
 
 /**

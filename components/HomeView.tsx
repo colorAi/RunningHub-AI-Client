@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { Globe, RefreshCw, Heart, MousePointerClick, Star, Play, Loader2, User, Search, X, Github, ExternalLink, Gift, Users, Coffee } from 'lucide-react';
-import { NodeInfo, WebAppInfo, Favorite, HomeDefaultTab } from '../types';
+import { Favorite, HomeDefaultTab } from '../types';
 import { getOfficialAppList, AppListItem } from '../services/api';
 import {
     getPreferredRunningHubRegion,
@@ -10,7 +10,7 @@ import {
 } from '../services/runningHubRegion';
 
 interface HomeViewProps {
-    onSelectApp: (appId: string, preloadedData?: { nodes: NodeInfo[], appInfo: WebAppInfo }) => void;
+    onSelectApp: (appId: string) => void;
     favorites: Favorite[];
     onToggleFavorite: (app: Favorite) => void;
     defaultTab: HomeDefaultTab;
@@ -267,14 +267,8 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, favorites, onToggleFav
                                             {/* Instant Use Button */}
                                             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                                                 <button
-                                                    onClick={() => {
-                                                        // Since we don't have nodes yet, just select it.
-                                                        // The parent component handles loading if needed, or we rely on 'handleInstantUse' logic?
-                                                        // handleInstantUse logic checks cache.
-                                                        // If not in cache, onSelectApp is called without details, triggering a fetch in parent/Config?
-                                                        // Yes, line 109: onSelectApp(appId)
-                                                        onSelectApp(app.id);
-                                                    }}
+                                                    onClick={() => onSelectApp(app.id)}
+                                                    disabled={!app.id.trim()}
                                                     className="flex items-center gap-1 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transform scale-90 group-hover:scale-100 transition-transform"
                                                 >
                                                     <Play className="w-3.5 h-3.5 fill-current" />

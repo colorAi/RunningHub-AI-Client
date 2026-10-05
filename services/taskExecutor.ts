@@ -22,6 +22,7 @@ export interface TaskUsageStats {
 }
 
 export interface ExecuteTaskCallbacks {
+  onSubmitted?: (taskId: string) => void;
   onLog?: (message: string) => void;
   onProgress?: (snapshot: TaskProgressSnapshot) => void;
   onStatusChange?: (status: 'SUBMITTING' | 'QUEUED' | 'RUNNING') => void;
@@ -243,6 +244,7 @@ export const executeWorkflowTask = async ({
   callbacks?.onLog?.(`${logPrefix}提交任务`);
 
   const submitResult = await submitTask(apiKey, webappId, nodesToSubmit, instanceType, runOptions);
+  callbacks?.onSubmitted?.(submitResult.taskId);
   const submitPromptTips = parsePromptTips(submitResult.promptTips);
   if (submitPromptTips?.node_errors && Object.keys(submitPromptTips.node_errors).length > 0) {
     const parsed = parseNodeErrors(submitPromptTips.node_errors);
