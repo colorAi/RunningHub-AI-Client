@@ -15,11 +15,12 @@ For commercial licensing or secondary development authorization, please contact 
 ## 📅 Changelog
 
 ### v1.6.6
-- Automatically refresh relocated Tauri build caches in the macOS and Windows packaging shortcuts, fixing stale plugin permission paths after copying the project folder.
-- Allow other cards to be submitted while multi-task scheduling is running; share live API queue capacity across accounts and deduplicate repeated keys.
-- Add optional app access passwords and instance retention (10–180 seconds, Enterprise Shared keys); support both documented upload response formats.
-- Fix H3 / ComfyUI v3 COMBO dropdowns and BOOLEAN descriptors in both single-task and batch forms.
-- Remove Duck Decoder settings, automatic processing, and manual result decoding.
+
+- Fixed concurrent execution across multiple accounts and task cards.
+- Fixed dropdown and toggle display issues in some H3 apps.
+- Added app access password and instance retention settings; improved file upload compatibility.
+- Removed Duck Decoder.
+- Fixed packaging failures after moving the project folder.
 
 ### v1.6.5
 - RH site separation adaptation; added English UI language.
@@ -156,21 +157,12 @@ Modified versions that are distributed or offered for remote network use must ma
 ## 📅 更新日志 (Changelog)
 
 ### v1.6.6
-- macOS / Windows 打包脚本自动清理搬迁目录后失效的 Tauri 缓存，修复旧目录权限文件路径导致的打包失败。
-- 修复提交一张卡片后锁定其他卡片的问题，支持运行中继续提交；按各账号实时队列容量并发调度，重复 Key 不重复计算槽位。
-- 适配应用访问密码、企业共享实例保留时长（10–180 秒），兼容中英文文档的两种上传响应格式。
-- 修复 H3 / ComfyUI v3 的 COMBO 下拉列表和 BOOLEAN 参数描述解析，单次运行与批量设置共用兼容逻辑。
-- 移除小黄鸭解码入口、自动解码和历史结果手动解码。
 
-#### H3 参数问题核对
-- 通过公开应用列表搜索 H3，再读取公开详情页参数，确认应用 [2101876745396908034](https://www.runninghub.cn/ai-detail/2101876745396908034) 的 `ref_image_size` 和 [2101871939232034818](https://www.runninghub.cn/ai-detail/2101871939232034818) 的 `aspect_ratio` 使用 `["COMBO", {"options": [...]}]` 格式；旧解析会显示 `COMBO` / `[object Object]`。
-- 修复类型描述与真实选项的区分，保留音频上传组件和旧版下拉格式。真实公开参数样例保存在 `tests/fixtures/h3-inputs.json`，可运行 `node --test tests/runninghub.test.mjs` 验证。
-
-#### 官方接口核对（2026-09-21）
-- [更新日志](https://www.runninghub.cn/runninghub-api-doc-cn/doc-8287335)：补充 `accessPassword` 和 `retainSeconds`。在卡片“应用运行选项”填写；访问密码仅保留在当前会话，不写入草稿。
-- [API Key 队列状态](https://www.runninghub.cn/runninghub-api-doc-cn/api-432926239)：使用 `concurrentLimit`、`totalCurrentTasks` 调度，接口不可用（404/405/5xx）时回退到账户信息。
-- [国内上传文档](https://rhtv.runninghub.cn/runninghub-api-doc-cn/api-425749007)与[英文上传文档](https://www.runninghub.cn/runninghub-api-doc-en/api-425761098)分别示例 `code: 0` / `fileName` 和 `code: 200` / `filename`，均已兼容。
-- AI 应用继续使用 `/task/openapi/ai-app/run`，结果查询沿用 `/openapi/v2/query` 并兼容旧结果接口。标准模型列表继续从官方注册表动态加载。
+- 修复多账号下多卡片无法并发运行的问题。
+- 修复部分 H3 应用的下拉选项和开关显示异常。
+- 新增应用访问密码和实例保留时长设置，优化文件上传兼容性。
+- 移除小黄鸭解码功能。
+- 修复项目目录变更后打包失败的问题。
 
 ### v1.6.5
 - RH站点隔离适配，增加英文界面语言。
