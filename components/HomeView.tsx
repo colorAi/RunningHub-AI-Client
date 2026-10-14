@@ -267,14 +267,7 @@ const HomeView: React.FC<HomeViewProps> = ({ onSelectApp, favorites, onToggleFav
                                             {/* Instant Use Button */}
                                             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                                                 <button
-                                                    onClick={() => {
-                                                        // Since we don't have nodes yet, just select it.
-                                                        // The parent component handles loading if needed, or we rely on 'handleInstantUse' logic?
-                                                        // handleInstantUse logic checks cache.
-                                                        // If not in cache, onSelectApp is called without details, triggering a fetch in parent/Config?
-                                                        // Yes, line 109: onSelectApp(appId)
-                                                        onSelectApp(app.id);
-                                                    }}
+                                                    onClick={() => onSelectApp(app.id)}
                                                     className="flex items-center gap-1 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transform scale-90 group-hover:scale-100 transition-transform"
                                                 >
                                                     <Play className="w-3.5 h-3.5 fill-current" />

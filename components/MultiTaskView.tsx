@@ -8,11 +8,19 @@ import { StepEditorRef, StepEditorSnapshot } from './StepEditor';
 import { ApiKeyEntry, AutoSaveConfig, Favorite, InstanceType, NodeInfo, PendingFilesMap, RecentApp, WebAppInfo, WorkflowRunOptions } from '../types';
 import { parseRunningHubAppInput } from '../services/runningHubRegion';
 
+export interface MultiTaskAppRequest {
+  requestId: string;
+  webappId: string;
+  nodes?: NodeInfo[];
+  appInfo?: WebAppInfo | null;
+}
+
 interface MultiTaskViewProps {
   apiKeys: ApiKeyEntry[];
   autoSaveConfig: AutoSaveConfig;
   recentApps: RecentApp[];
   favorites: Favorite[];
+  appToOpen?: MultiTaskAppRequest | null;
 }
 
 interface RunUnit {
@@ -146,6 +154,7 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
   autoSaveConfig,
   recentApps,
   favorites,
+  appToOpen,
 }) => {
   const [cards, setCards] = useState<MultiTaskCardData[]>(() => [createCard()]);
   const [showAppPicker, setShowAppPicker] = useState(false);
@@ -174,6 +183,7 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
   const editorRefs = useRef<Record<string, StepEditorRef | null>>({});
   const manualSnapshotsRef = useRef<Record<string, StepEditorSnapshot | undefined>>({});
   const sessionRef = useRef<SessionState | null>(null);
+  const lastAppRequestIdRef = useRef<string | null>(null);
 
   useEffect(() => () => {
     const session = sessionRef.current;
@@ -367,20 +377,22 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
     setSessionNotice(`\u5df2\u5220\u9664\u8349\u7a3f\u300c${targetDraft.name}\u300d`);
   };
 
-  const handleCreateCard = (partial?: Partial<MultiTaskCardData>) => {
+  const handleCreateCard = (partial?: Partial<MultiTaskCardData>, replacePlaceholder = false) => {
     const nextCard = createCard(partial);
-    setCards(prev => [...prev, nextCard]);
+    setCards(prev => replacePlaceholder && prev.length === 1 && isPlaceholderCard(prev[0])
+      ? [nextCard]
+      : [...prev, nextCard]);
     setShowAppPicker(false);
     return nextCard.id;
   };
 
-  const handleCreateCardFromPreset = async (preset: { webappId: string; nodes?: NodeInfo[]; appInfo?: WebAppInfo | null; name?: string }) => {
+  const handleCreateCardFromPreset = async (preset: { webappId: string; nodes?: NodeInfo[]; appInfo?: WebAppInfo | null; name?: string }, replacePlaceholder = false) => {
     const cardId = handleCreateCard({
       webappId: preset.webappId,
       webAppInfo: preset.appInfo || null,
       nodes: preset.nodes || [],
       isConnected: !!preset.nodes?.length,
-    });
+    }, replacePlaceholder);
 
     if (!preset.nodes?.length && preset.webappId) {
       await handleLoadCard(cardId, preset.webappId);
@@ -469,6 +481,13 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
       }));
     }
   };
+
+  useEffect(() => {
+    if (!appToOpen || lastAppRequestIdRef.current === appToOpen.requestId) return;
+    // Consume each click once; changing views or API settings must not add another card.
+    lastAppRequestIdRef.current = appToOpen.requestId;
+    void handleCreateCardFromPreset(appToOpen, true);
+  }, [appToOpen]);
 
   const finishUnit = (session: SessionState, cardId: string) => {
     const remaining = Math.max(0, (session.remainingUnits.get(cardId) || 1) - 1);

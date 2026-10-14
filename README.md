@@ -14,6 +14,10 @@ For commercial licensing or secondary development authorization, please contact 
 
 ## 📅 Changelog
 
+### v1.6.7
+
+- Fixed “Use Now” in the app store and favorites to open Multi-task mode, create an app card, and load its default parameters while preserving existing cards.
+
 ### v1.6.6
 
 - Fixed concurrent execution across multiple accounts and task cards.
@@ -155,6 +159,10 @@ Modified versions that are distributed or offered for remote network use must ma
 商用授权、二次开发授权请联系 QQ 409993197（注明来意）。
 
 ## 📅 更新日志 (Changelog)
+
+### v1.6.7
+
+- 修复商城及收藏中“立即使用”的跳转：自动进入多任务模式，创建应用卡片并加载默认参数，保留已有卡片。
 
 ### v1.6.6
 

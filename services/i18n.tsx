@@ -5,7 +5,7 @@ export type AppLanguage = 'zh' | 'en';
 const LANGUAGE_STORAGE_KEY = 'rh_language';
 
 const EN_TRANSLATIONS: Record<string, string> = {
-  'RH客户端( H 版 ) v1.6.6': 'RH Client (H Edition) v1.6.6',
+  'RH客户端( H 版 ) v1.6.7': 'RH Client (H Edition) v1.6.7',
   '首页': 'Home',
   '设置': 'Settings',
   '个人中心': 'Account',

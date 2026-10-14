@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Home, Briefcase, Settings, User, Layers, Languages } from 'lucide-react';
 import type { StepRunningRef } from './components/StepRunning';
+import type { MultiTaskAppRequest } from './components/MultiTaskView';
 import SettingsModal from './components/SettingsModal';
 import Footer from './components/Footer';
 import TermsModal from './components/TermsModal';
@@ -111,6 +112,7 @@ function App() {
     }
   });
   const [homeViewResetToken, setHomeViewResetToken] = useState(0);
+  const [appToOpen, setAppToOpen] = useState<MultiTaskAppRequest | null>(null);
 
   // State
   const [webappId, setWebappId] = useState('');
@@ -422,25 +424,22 @@ function App() {
   };
 
   const handleSelectApp = (appId: string, preloadedData?: { nodes: NodeInfo[], appInfo: WebAppInfo }) => {
-    setWebappId(appId);
+    setAppToOpen({
+      requestId: crypto.randomUUID(),
+      webappId: appId,
+      nodes: preloadedData?.nodes,
+      appInfo: preloadedData?.appInfo,
+    });
     if (preloadedData) {
-      setNodes(preloadedData.nodes);
-      setWebAppInfo(preloadedData.appInfo);
-      setIsConnected(true);
       addToRecent(appId, preloadedData.appInfo.webappName);
     }
-    setCurrentView('workspace');
+    setCurrentView('multitask');
   };
 
   const handleSelectFavorite = (fav: Favorite) => {
-    setWebappId(fav.webappId);
-    if (fav.nodes && fav.appInfo) {
-      setNodes(fav.nodes);
-      setWebAppInfo(fav.appInfo);
-      setIsConnected(true);
-      addToRecent(fav.webappId, fav.appInfo.webappName);
-    }
-    setCurrentView('workspace');
+    handleSelectApp(fav.webappId, fav.nodes && fav.appInfo
+      ? { nodes: fav.nodes, appInfo: fav.appInfo }
+      : undefined);
   };
 
   const handleCancelRun = () => {
@@ -474,7 +473,7 @@ function App() {
       <header className="bg-white dark:bg-[#0F1115] border-b border-slate-200 dark:border-slate-800/50 h-14 flex items-center justify-between pr-4 shrink-0 z-20 shadow-sm">
         <div className="flex items-center h-full gap-3">
           <img src="/r.png" alt="RunningHub" className="h-10 w-auto ml-2" />
-          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">{text('RH客户端( H 版 ) v1.6.6', 'RH Client (H Edition) v1.6.6')}</span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white tracking-wide">{text('RH客户端( H 版 ) v1.6.7', 'RH Client (H Edition) v1.6.7')}</span>
           <button
             onClick={handleOpenAbout}
             className="ml-2 px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"
@@ -564,6 +563,7 @@ function App() {
               autoSaveConfig={autoSaveConfig}
               recentApps={recentApps}
               favorites={favorites}
+              appToOpen={appToOpen}
             />
           </div>
 
