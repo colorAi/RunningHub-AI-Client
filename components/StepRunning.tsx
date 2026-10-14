@@ -4,6 +4,7 @@ import { saveMultipleFiles, getDirectoryName } from '../services/autoSaveService
 import { connectTaskProgress, TaskProgressSnapshot } from '../services/taskProgress';
 import { isCapacityLimitedError, queryTaskResult, submitStandardModelTask, submitTask, uploadFile } from '../services/api';
 import { createApiCapacityManagers } from '../services/apiCapacity';
+import { TaskCancelledError, TaskExecutionError } from '../services/taskExecutor';
 import { ApiKeyConfig, FailedTaskInfo, InstanceType, NodeInfo, PendingFilesMap, PromptTips, StandardModelConfig, TaskOutput } from '../types';
 
 interface StepRunningProps {
@@ -162,6 +163,13 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
   const savedFilesCountRef = useRef(0);
   const standardTaskCounterRef = useRef(0);
   const activeStandardTasksRef = useRef(0);
+  const cancelledRef = useRef(false);
+  const cancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capacityManagersRef = useRef<ReturnType<typeof createApiCapacityManagers>>([]);
+
+  const ensureActive = () => {
+    if (cancelledRef.current) throw new TaskCancelledError();
+  };
 
   const addLog = (msg: string) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -250,7 +258,9 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     const clonedNodes = taskNodes.map(node => ({ ...node }));
 
     for (const { nodeId, fieldName, file } of filesToUpload) {
+      ensureActive();
       const result = await uploadFile(apiKey, file);
+      ensureActive();
       const targetIndex = clonedNodes.findIndex(node => String(node.nodeId) === String(nodeId) && (node.fieldName || '') === fieldName);
       if (targetIndex !== -1) {
         clonedNodes[targetIndex].fieldValue = result.fileName;
@@ -288,6 +298,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     contextLabel: string,
     onStatusChange?: (nextStatus: ViewStatus) => void,
   ): Promise<{ outputs: TaskOutput[]; taskId: string; usage?: { coins: number; thirdParty: number; taskTime: number } }> => {
+    ensureActive();
     onStatusChange?.('SUBMITTING');
     addLog(`${contextLabel}提交任务`);
 
@@ -295,6 +306,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     const submitResult = isStandardModelTask
       ? await submitStandardModelTask(apiKey, standardModelConfig.endpoint, taskNodes)
       : await submitTask(apiKey, webappId, taskNodes, instanceType);
+    ensureActive();
     const submitPromptTips = parsePromptTips(submitResult.promptTips);
     if (submitPromptTips?.node_errors && Object.keys(submitPromptTips.node_errors).length > 0) {
       const parsed = parseNodeErrors(submitPromptTips.node_errors);
@@ -312,7 +324,9 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
 
     try {
       while (true) {
+        ensureActive();
         const result = await queryTaskResult(apiKey, submitResult.taskId);
+        ensureActive();
 
         if (result.status === 'SUCCESS') {
           const usage = result.usage
@@ -349,8 +363,45 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
 
         await sleep(POLL_INTERVAL_MS);
       }
+    } catch (error) {
+      if (error instanceof TaskCancelledError) throw error;
+      throw new TaskExecutionError(submitResult.taskId, error);
     } finally {
       stopProgressMonitor();
+    }
+  };
+
+  const executeWhenAvailable = async (
+    manager: ReturnType<typeof createApiCapacityManagers>[number],
+    taskNodes: NodeInfo[],
+    logPrefix: string,
+    onStatusChange: (status: ViewStatus) => void,
+  ) => {
+    const snapshotNodes = taskNodes.map(node => ({ ...node }));
+    let waiting = false;
+    while (true) {
+      ensureActive();
+      const snapshot = await manager.probe(waiting);
+      ensureActive();
+      if (snapshot.availableSlots <= 0 || !manager.reserveSlot()) {
+        onStatusChange('QUEUED');
+        if (!waiting) addLog(`${logPrefix}等待 API 空闲槽位后自动继续...`);
+        waiting = true;
+        await sleep(CAPACITY_WAIT_MS);
+        continue;
+      }
+      try {
+        return await executeTask(manager.apiKey, snapshotNodes, logPrefix, onStatusChange);
+      } catch (error) {
+        ensureActive();
+        if (!isCapacityLimitedError(error)) throw error;
+        manager.markCapacityLimited();
+        waiting = true;
+        onStatusChange('QUEUED');
+        addLog(`${logPrefix}API 并发暂时已满，已回到队列等待自动重试。`);
+      } finally {
+        manager.releaseSlot();
+      }
     }
   };
 
@@ -359,11 +410,14 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     hasStartedRef.current = true;
 
     let active = true;
+    cancelledRef.current = false;
+    const isActive = () => active && !cancelledRef.current;
     const isBatch = !!batchList && batchList.length > 0;
     const totalTasks = isBatch ? batchList.length : 1;
     setBatchTotal(totalTasks);
     taskUsageMapRef.current = new Map();
     const capacityManagers = createApiCapacityManagers(apiConfigs);
+    capacityManagersRef.current = capacityManagers;
     if (!isBatch && standardModelConfig) {
       standardTaskCounterRef.current = 1;
       activeStandardTasksRef.current = 1;
@@ -374,77 +428,30 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
       if (!manager) {
         setStatus('FAILED');
         setErrorDetails('没有可用的 API Key');
+        activeStandardTasksRef.current = 0;
         return;
       }
-
-      let hasLoggedWait = false;
-
-      while (active) {
-        let slotReserved = false;
-
-        try {
-          const snapshot = await manager.probe(hasLoggedWait);
-          if (!active) return;
-
-          if (snapshot.availableSlots <= 0) {
-            setStatus('QUEUED');
-            if (!hasLoggedWait) {
-              addLog('当前 API 并发已被其他任务占用，等待空闲槽位后自动继续...');
-              hasLoggedWait = true;
-            }
-            await sleep(CAPACITY_WAIT_MS);
-            manager.markProbeStale();
-            continue;
-          }
-
-          if (!manager.reserveSlot()) {
-            await sleep(CAPACITY_WAIT_MS);
-            manager.markProbeStale();
-            continue;
-          }
-
-          slotReserved = true;
-          hasLoggedWait = false;
-
-          const result = await executeTask(manager.apiKey, nodes, '', nextStatus => active && setStatus(nextStatus));
-          if (!active) return;
-
-          await saveOutputs(result.outputs);
+      let succeeded = false;
+      try {
+        const result = await executeWhenAvailable(manager, nodes, '', nextStatus => isActive() && setStatus(nextStatus));
+        if (!isActive()) return;
+        if (result.usage) taskUsageMapRef.current.set(0, result.usage);
+        await saveOutputs(result.outputs);
+        if (!isActive()) return;
+        succeeded = true;
+        onComplete(result.outputs, result.taskId);
+      } catch (error: any) {
+        if (!isActive()) return;
+        setFailedCount(prev => prev + 1);
+        setErrorDetails(error.message || '任务执行失败');
+        addLog(`任务失败: ${error.message || error}`);
+      } finally {
+        if (isActive()) {
           if (standardModelConfig) {
             activeStandardTasksRef.current = Math.max(0, activeStandardTasksRef.current - 1);
             setCurrentBatchIndex(prev => prev + 1);
-            setStatus(activeStandardTasksRef.current > 0 ? 'RUNNING' : 'SUCCESS');
-          } else {
-            setStatus('SUCCESS');
           }
-          onComplete(result.outputs, result.taskId);
-          return;
-        } catch (error: any) {
-          if (!active) return;
-
-          if (isCapacityLimitedError(error)) {
-            setStatus('QUEUED');
-            manager.markProbeStale();
-            addLog('API 并发暂时已满，已自动等待后重试。');
-            await sleep(CAPACITY_WAIT_MS);
-            continue;
-          }
-
-          if (standardModelConfig) {
-            activeStandardTasksRef.current = Math.max(0, activeStandardTasksRef.current - 1);
-            setFailedCount(prev => prev + 1);
-            setCurrentBatchIndex(prev => prev + 1);
-            setStatus(activeStandardTasksRef.current > 0 ? 'RUNNING' : 'FAILED');
-          } else {
-            setStatus('FAILED');
-          }
-          setErrorDetails(error.message || '任务执行失败');
-          addLog(`任务失败: ${error.message || error}`);
-          return;
-        } finally {
-          if (slotReserved) {
-            manager.releaseSlot();
-          }
+          setStatus(activeStandardTasksRef.current > 0 ? 'RUNNING' : succeeded ? 'SUCCESS' : 'FAILED');
         }
       }
     };
@@ -494,19 +501,19 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
         onBatchComplete(summaryLogs, failedTasksLocal);
       };
 
-      while (active && (pendingTaskIndices.length > 0 || runningTasks.size > 0)) {
+      while (isActive() && (pendingTaskIndices.length > 0 || runningTasks.size > 0)) {
         let launchedCount = 0;
 
         for (const manager of capacityManagers) {
-          if (!active || pendingTaskIndices.length === 0) {
+          if (!isActive() || pendingTaskIndices.length === 0) {
             break;
           }
 
           const snapshot = await manager.probe(launchedCount === 0);
-          if (!active) return;
+          if (!isActive()) return;
 
           let availableSlots = snapshot.availableSlots;
-          while (active && availableSlots > 0 && pendingTaskIndices.length > 0) {
+          while (isActive() && availableSlots > 0 && pendingTaskIndices.length > 0) {
             const taskIndex = pendingTaskIndices.shift();
             if (taskIndex == null) {
               break;
@@ -530,8 +537,8 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
               try {
                 setStatus('RUNNING');
                 const nodesToSubmit = await uploadPendingFilesForTask(manager.apiKey, taskNodes, taskIndex, logPrefix);
-                const result = await executeTask(manager.apiKey, nodesToSubmit, logPrefix, nextStatus => active && setStatus(nextStatus === 'QUEUED' ? 'QUEUED' : 'RUNNING'));
-                if (!active) return;
+                const result = await executeTask(manager.apiKey, nodesToSubmit, logPrefix, nextStatus => isActive() && setStatus(nextStatus === 'QUEUED' ? 'QUEUED' : 'RUNNING'));
+                if (!isActive()) return;
 
                 if (result.usage) {
                   taskUsageMapRef.current.set(taskIndex, result.usage);
@@ -543,11 +550,11 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
                 setCurrentBatchIndex(completedCount + failedCountLocal);
                 addLog(`${logPrefix}已完成`);
               } catch (error: any) {
-                if (!active) return;
+                if (!isActive()) return;
 
                 if (isCapacityLimitedError(error)) {
                   pendingTaskIndices.unshift(taskIndex);
-                  manager.markProbeStale();
+                  manager.markCapacityLimited();
                   setStatus('QUEUED');
                   addLog(`${logPrefix}API 并发暂时已满，已回到队列等待自动重试`);
                   return;
@@ -573,7 +580,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
           }
         }
 
-        if (!active) return;
+        if (!isActive()) return;
 
         if (launchedCount > 0) {
           continue;
@@ -596,151 +603,33 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
       }
 
       await Promise.all(runningTasks);
-      if (active) {
-        finalizeBatch();
-      }
-    };
-
-    const runSingleTask = async () => {
-      const apiKey = apiConfigs[0]?.apiKey || '';
-      if (!apiKey) {
-        setStatus('FAILED');
-        setErrorDetails('没有可用的 API Key');
-        return;
-      }
-
-      try {
-        const result = await executeTask(apiKey, nodes, '', nextStatus => active && setStatus(nextStatus));
-        if (!active) return;
-
-        await saveOutputs(result.outputs);
-        setStatus('SUCCESS');
-        onComplete(result.outputs, result.taskId);
-      } catch (error: any) {
-        if (!active) return;
-        setStatus('FAILED');
-        setErrorDetails(error.message || '任务执行失败');
-        addLog(`任务失败: ${error.message || error}`);
-      }
-    };
-
-    const runBatchTasks = async () => {
-      let nextTaskIndex = 0;
-      let completedCount = 0;
-      let failedCountLocal = 0;
-      const failedTasksLocal: FailedTaskInfo[] = [];
-
-      const getNextTaskIndex = () => {
-        if (nextTaskIndex >= totalTasks) return null;
-        const current = nextTaskIndex;
-        nextTaskIndex += 1;
-        return current;
-      };
-
-      const finalizeBatch = () => {
-        const successCount = totalTasks - failedCountLocal;
-        const dirName = getDirectoryName();
-        const summaryLogs: string[] = [`全部批量任务已结束，成功 ${successCount} 个，失败 ${failedCountLocal} 个。`];
-
-        if (autoSaveEnabled && dirName && savedFilesCountRef.current > 0) {
-          summaryLogs.push(`结果已保存到目录: ${dirName}`);
-        }
-
-        const totalUsage = { coins: 0, thirdParty: 0, taskTime: 0 };
-        taskUsageMapRef.current.forEach(usage => {
-          totalUsage.coins += usage.coins;
-          totalUsage.thirdParty += usage.thirdParty;
-          totalUsage.taskTime += usage.taskTime;
-        });
-
-        if (taskUsageMapRef.current.size > 0) {
-          summaryLogs.push(`累计消耗 RH 币: ${totalUsage.coins.toFixed(2)}`);
-          if (totalUsage.thirdParty > 0) {
-            summaryLogs.push(`累计第三方消耗: ${totalUsage.thirdParty.toFixed(2)}`);
-          }
-          if (totalUsage.taskTime > 0) {
-            summaryLogs.push(`累计运行时长: ${totalUsage.taskTime} 秒`);
-          }
-        }
-
-        setStatus('SUCCESS');
-        setFailedCount(failedCountLocal);
-        onBatchComplete(summaryLogs, failedTasksLocal);
-      };
-
-      const worker = async (apiKey: string, workerLabel: string) => {
-        while (active) {
-          const taskIndex = getNextTaskIndex();
-          if (taskIndex == null) return;
-
-          const taskNodes = batchList![taskIndex];
-          const logPrefix = `${workerLabel}任务 ${taskIndex + 1}/${totalTasks}: `;
-
-          try {
-            setStatus('RUNNING');
-            const nodesToSubmit = await uploadPendingFilesForTask(apiKey, taskNodes, taskIndex, logPrefix);
-            const result = await executeTask(apiKey, nodesToSubmit, logPrefix, nextStatus => active && setStatus(nextStatus === 'QUEUED' ? 'QUEUED' : 'RUNNING'));
-            if (!active) return;
-
-            if (result.usage) {
-              taskUsageMapRef.current.set(taskIndex, result.usage);
-            }
-
-            await saveOutputs(result.outputs, taskIndex, logPrefix);
-
-            completedCount += 1;
-            setCurrentBatchIndex(completedCount + failedCountLocal);
-            addLog(`${logPrefix}已完成`);
-          } catch (error: any) {
-            if (!active) return;
-
-            failedCountLocal += 1;
-            setFailedCount(failedCountLocal);
-            setCurrentBatchIndex(completedCount + failedCountLocal);
-            failedTasksLocal.push({
-              batchIndex: taskIndex,
-              errorMessage: error.message || '未知错误',
-              timestamp: Date.now(),
-            });
-            addLog(`${logPrefix}失败: ${error.message || error}`);
-          }
-        }
-      };
-
-      const workers = apiConfigs
-        .filter(config => config.apiKey.trim())
-        .flatMap((config, configIndex) =>
-          Array.from({ length: config.concurrency || 1 }, (_, workerIndex) =>
-            worker(config.apiKey, apiConfigs.length > 1 ? `[API${configIndex + 1}-${workerIndex + 1}] ` : ''),
-          ),
-        );
-
-      if (workers.length === 0) {
-        setStatus('FAILED');
-        setErrorDetails('没有可用的 API Key');
-        return;
-      }
-
-      await Promise.all(workers);
-      if (active) {
+      if (isActive()) {
         finalizeBatch();
       }
     };
 
     if (isBatch) {
-      void runBatchTasksAdaptive();
+      void runBatchTasksAdaptive().catch(error => {
+        if (!isActive()) return;
+        setStatus('FAILED');
+        setErrorDetails(error.message || '任务调度失败');
+      });
     } else {
       void runSingleTaskAdaptive();
     }
 
     return () => {
       active = false;
+      cancelledRef.current = true;
+      if (cancelTimerRef.current) clearTimeout(cancelTimerRef.current);
       hasStartedRef.current = false;
       closeAllConnections();
     };
   }, []);
 
   const handleBatchCancel = () => {
+    if (cancelledRef.current) return;
+    cancelledRef.current = true;
     closeAllConnections();
 
     const summaryLogs: string[] = ['任务已在客户端停止跟踪，服务端已提交的任务可能仍在继续执行。'];
@@ -768,16 +657,16 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
       onBatchCancel(summaryLogs, []);
     } else {
       setCancelMessage(summaryLogs.join('\n'));
-      setTimeout(() => onBack(), 2500);
+      cancelTimerRef.current = setTimeout(() => onBack(), 2500);
     }
   };
 
   const submitAdditionalTask = (taskNodes: NodeInfo[]) => {
-    if (!standardModelConfig) {
+    if (!standardModelConfig || cancelledRef.current) {
       return;
     }
 
-    const apiKey = apiConfigs[0]?.apiKey || '';
+    const apiKey = apiConfigs[0]?.apiKey.trim() || '';
     if (!apiKey) {
       setStatus('FAILED');
       setErrorDetails('没有可用的 API Key');
@@ -785,6 +674,11 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     }
 
     const taskNumber = standardTaskCounterRef.current + 1;
+    let manager = capacityManagersRef.current.find(item => item.apiKey === apiKey);
+    if (!manager) {
+      manager = createApiCapacityManagers([apiConfigs[0]])[0];
+      capacityManagersRef.current.push(manager);
+    }
     standardTaskCounterRef.current = taskNumber;
     activeStandardTasksRef.current += 1;
     setBatchTotal(taskNumber);
@@ -795,25 +689,29 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
     void (async () => {
       let succeeded = false;
       try {
-        const result = await executeTask(apiKey, taskNodes.map(node => ({ ...node })), logPrefix, nextStatus => {
+        const result = await executeWhenAvailable(manager, taskNodes, logPrefix, nextStatus => {
           setStatus(nextStatus === 'QUEUED' ? 'QUEUED' : 'RUNNING');
         });
+        ensureActive();
 
         if (result.usage) {
           taskUsageMapRef.current.set(taskNumber - 1, result.usage);
         }
 
         await saveOutputs(result.outputs, taskNumber - 1, logPrefix);
+        ensureActive();
         addLog(`${logPrefix}已完成`);
         onComplete(result.outputs, result.taskId);
         succeeded = true;
       } catch (error: any) {
+        if (cancelledRef.current) return;
         setFailedCount(prev => prev + 1);
         setErrorDetails(error.message || '任务执行失败');
         addLog(`${logPrefix}失败: ${error.message || error}`);
       } finally {
+        if (cancelledRef.current) return;
         activeStandardTasksRef.current = Math.max(0, activeStandardTasksRef.current - 1);
-        setCurrentBatchIndex(prev => Math.min(taskNumber, prev + 1));
+        setCurrentBatchIndex(prev => prev + 1);
         setStatus(activeStandardTasksRef.current > 0 ? 'RUNNING' : succeeded ? 'SUCCESS' : 'FAILED');
       }
     })();
@@ -829,6 +727,11 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-[#0F1115]/50">
       <div className="p-5 border-b border-slate-200 dark:border-slate-800/50 bg-white dark:bg-[#161920]">
+        {!cancelMessage && status !== 'SUCCESS' && status !== 'FAILED' && (
+          <button onClick={handleBatchCancel} className="float-right rounded-lg px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+            停止追踪
+          </button>
+        )}
         <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800 dark:text-white">
           <Activity className="w-5 h-5 text-brand-500 animate-pulse" />
           {batchTotal > 1 ? `批量任务执行中 (${currentBatchIndex}/${batchTotal})` : '任务执行中'}
@@ -933,7 +836,7 @@ const StepRunning = forwardRef<StepRunningRef, StepRunningProps>(({
         </div>
       </div>
 
-      {(status === 'FAILED' || (status === 'SUCCESS' && batchTotal > 1)) && (
+      {(status === 'FAILED' || status === 'SUCCESS') && (
         <div className="p-4 bg-white dark:bg-[#161920] border-t border-slate-200 dark:border-slate-800/50">
           <button
             onClick={onBack}

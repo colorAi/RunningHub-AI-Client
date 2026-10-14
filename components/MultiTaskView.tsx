@@ -7,6 +7,7 @@ import MultiTaskCard, { MultiTaskCardData, MultiTaskCardRunState } from './multi
 import { StepEditorRef, StepEditorSnapshot } from './StepEditor';
 import { ApiKeyEntry, AutoSaveConfig, Favorite, InstanceType, NodeInfo, PendingFilesMap, RecentApp, WebAppInfo, WorkflowRunOptions } from '../types';
 import { parseRunningHubAppInput } from '../services/runningHubRegion';
+import { playBatchReminder } from '../services/taskReminder';
 
 export interface MultiTaskAppRequest {
   requestId: string;
@@ -43,6 +44,7 @@ interface SessionState {
   connections: Map<string, Set<() => void>>;
   pendingUnits: RunUnit[];
   remainingUnits: Map<string, number>;
+  completedBatch?: boolean;
   wake?: () => void;
 }
 
@@ -126,11 +128,13 @@ const createCard = (partial?: Partial<MultiTaskCardData>): MultiTaskCardData => 
   nodes: partial?.nodes ? cloneNodes(partial.nodes) : [],
   isConnected: partial?.isConnected || false,
   loading: partial?.loading || false,
+  editorRevision: partial?.editorRevision || 0,
   loadError: partial?.loadError || null,
   instanceType: partial?.instanceType || 'default',
   runOptions: { ...partial?.runOptions },
   initialBatchList: partial?.initialBatchList ? cloneNodeRows(partial.initialBatchList) : [],
   initialBatchTaskName: partial?.initialBatchTaskName || '',
+  initialPendingFiles: { ...partial?.initialPendingFiles },
   run: partial?.run ? {
     ...partial.run,
     logs: [...partial.run.logs],
@@ -247,7 +251,7 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
     return {
       nodes: cloneNodes(card.nodes),
       batchList: cloneNodeRows(card.initialBatchList),
-      pendingFiles: {},
+      pendingFiles: { ...card.initialPendingFiles },
       batchTaskName: card.initialBatchTaskName || '',
       instanceType: card.instanceType,
       hasUploadingFiles: false,
@@ -288,6 +292,14 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
 
     if (draftSourceCards.length === 0) {
       setSessionNotice('\u5f53\u524d\u6ca1\u6709\u53ef\u4fdd\u5b58\u7684\u5361\u7247\u8349\u7a3f\u3002');
+      return;
+    }
+
+    if (draftSourceCards.some(card => {
+      const snapshot = buildSnapshotForCard(card);
+      return snapshot.hasUploadingFiles || Object.keys(snapshot.pendingFiles).length > 0;
+    })) {
+      setSessionNotice('草稿无法保存尚未上传的本地文件，请先上传文件或移除对应的批量文件后再保存。');
       return;
     }
 
@@ -425,13 +437,22 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
       runOptions: { ...sourceCard.runOptions },
       initialBatchList: snapshot?.batchList || sourceCard.initialBatchList,
       initialBatchTaskName: snapshot?.batchTaskName || sourceCard.initialBatchTaskName,
+      initialPendingFiles: snapshot?.pendingFiles || sourceCard.initialPendingFiles,
     });
   };
 
   const handleWebappIdChange = (cardId: string, value: string) => {
-    updateCard(cardId, card => ({
+    delete manualSnapshotsRef.current[cardId];
+    updateCard(cardId, card => value === card.webappId ? card : ({
       ...card,
       webappId: value,
+      isConnected: false,
+      webAppInfo: null,
+      nodes: [],
+      initialBatchList: [],
+      initialBatchTaskName: '',
+      initialPendingFiles: {},
+      editorRevision: card.editorRevision + 1,
       loadError: null,
     }));
   };
@@ -461,16 +482,19 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
 
     try {
       const result = await getNodeList(primaryApiKey, rawWebappId);
+      delete manualSnapshotsRef.current[cardId];
       updateCard(cardId, card => ({
         ...card,
         webappId: normalizedWebappId,
         webAppInfo: result.appInfo,
         nodes: result.nodes,
+        editorRevision: card.editorRevision + 1,
         isConnected: true,
         loading: false,
         loadError: null,
         initialBatchList: [],
         initialBatchTaskName: '',
+        initialPendingFiles: {},
         run: createEmptyRunState(),
       }));
     } catch (error: any) {
@@ -885,7 +909,12 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
                 appendCardLog(unit.cardId, `失败: ${error.message || error}`);
               } finally {
                 manager.releaseSlot();
-                if (!retry) finishUnit(session, unit.cardId);
+                if (!retry) {
+                  if (unit.totalUnits > 1 && !isCardCancelled(session, unit.cardId) && session.remainingUnits.get(unit.cardId) === 1) {
+                    session.completedBatch = true;
+                  }
+                  finishUnit(session, unit.cardId);
+                }
               }
             })().finally(() => {
               runningTasks.delete(taskPromise);
@@ -927,6 +956,7 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
       session.connections.forEach(closers => closers.forEach(close => close()));
       sessionRef.current = null;
       setSessionActive(false);
+      if (!session.cancelled && session.completedBatch) playBatchReminder();
     }
 
   };
@@ -953,6 +983,7 @@ const MultiTaskView: React.FC<MultiTaskViewProps> = ({
       instanceType: nextInstanceType,
       initialBatchList: batchList ? cloneNodeRows(batchList) : [],
       initialBatchTaskName: batchTaskName || '',
+      initialPendingFiles: { ...pendingFiles },
     }));
 
     const snapshot: StepEditorSnapshot = {

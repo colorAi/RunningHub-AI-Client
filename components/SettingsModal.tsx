@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, Coins, Globe2, Key, Loader2, Plus, RefreshCw, Save, Trash2, User, X } from 'lucide-react';
 import { ApiInfo, ApiKeyEntry, AutoSaveConfig, RunningHubRegionMode } from '../types';
 import { getApiInfo } from '../services/api';
@@ -140,6 +140,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const entries = ensureApiEntries(apiKeys);
   const enterpriseEntry = ensureEntry(enterpriseApi);
+  const latestSettings = useRef({ entries, enterpriseEntry, saveApiKeyEnabled });
+  latestSettings.current = { entries, enterpriseEntry, saveApiKeyEnabled };
   const configuredEntries = entries.filter(entry => entry.apiKey.trim());
   const totalConsumerConcurrency = configuredEntries.reduce((sum, entry) => sum + (entry.concurrency || 1), 0);
   const enterpriseConcurrency = enterpriseEntry.apiKey.trim() ? enterpriseEntry.concurrency || 1 : 0;
@@ -152,14 +154,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     localStorage.removeItem('rh_official_apps_cache_global');
   };
 
-  const updateEntries = (updater: (currentEntries: ApiKeyEntry[]) => ApiKeyEntry[], saveToStorage = saveApiKeyEnabled) => {
-    onUpdateApiKeys(ensureApiEntries(updater(entries)), saveToStorage);
+  const updateEntries = (updater: (currentEntries: ApiKeyEntry[]) => ApiKeyEntry[], saveToStorage = latestSettings.current.saveApiKeyEnabled) => {
+    const updated = ensureApiEntries(updater(latestSettings.current.entries));
+    latestSettings.current.entries = updated;
+    onUpdateApiKeys(updated, saveToStorage);
   };
 
   const updateEntry = (
     entryId: string,
     updater: (entry: ApiKeyEntry) => ApiKeyEntry,
-    saveToStorage = saveApiKeyEnabled,
+    saveToStorage = latestSettings.current.saveApiKeyEnabled,
   ) => {
     updateEntries(
       currentEntries => currentEntries.map(entry => entry.id === entryId ? ensureEntry(updater(ensureEntry(entry))) : entry),
@@ -186,7 +190,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     updateEntry(entryId, entry => ({ ...entry, loading: true, error: undefined }));
     try {
       const apiInfo = await getApiInfo(targetEntry.apiKey);
-      updateEntry(entryId, entry => ({
+      updateEntry(entryId, entry => entry.apiKey !== targetEntry.apiKey ? entry : ({
         ...entry,
         concurrency: getConcurrencyFromInfo(apiInfo),
         accountInfo: apiInfo.account,
@@ -195,7 +199,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         error: undefined,
       }));
     } catch (error: any) {
-      updateEntry(entryId, entry => ({
+      updateEntry(entryId, entry => entry.apiKey !== targetEntry.apiKey ? entry : ({
         ...entry,
         accountInfo: null,
         apiInfo: null,
@@ -214,22 +218,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     onUpdateEnterpriseApi({ ...enterpriseEntry, loading: true, error: undefined }, saveApiKeyEnabled);
     try {
       const apiInfo = await getApiInfo(enterpriseEntry.apiKey);
+      if (latestSettings.current.enterpriseEntry.apiKey !== enterpriseEntry.apiKey) return;
       onUpdateEnterpriseApi({
-        ...enterpriseEntry,
+        ...latestSettings.current.enterpriseEntry,
         concurrency: getConcurrencyFromInfo(apiInfo),
         accountInfo: apiInfo.account,
         apiInfo,
         loading: false,
         error: undefined,
-      }, saveApiKeyEnabled);
+      }, latestSettings.current.saveApiKeyEnabled);
     } catch (error: any) {
+      if (latestSettings.current.enterpriseEntry.apiKey !== enterpriseEntry.apiKey) return;
       onUpdateEnterpriseApi({
-        ...enterpriseEntry,
+        ...latestSettings.current.enterpriseEntry,
         accountInfo: null,
         apiInfo: null,
         loading: false,
         error: error?.message || '获取企业共享 API 信息失败',
-      }, saveApiKeyEnabled);
+      }, latestSettings.current.saveApiKeyEnabled);
     } finally {
       setLoadingAny(false);
     }
@@ -370,6 +376,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         onChange={(event) => onUpdateEnterpriseApi({
                           ...enterpriseEntry,
                           apiKey: event.target.value,
+                          loading: false,
                           accountInfo: event.target.value.trim() === enterpriseEntry.apiKey.trim() ? enterpriseEntry.accountInfo : null,
                           apiInfo: event.target.value.trim() === enterpriseEntry.apiKey.trim() ? enterpriseEntry.apiInfo : null,
                           error: undefined,
@@ -431,6 +438,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                           onChange={(event) => updateEntry(entry.id, current => ({
                             ...current,
                             apiKey: event.target.value,
+                            loading: false,
                             accountInfo: event.target.value.trim() === current.apiKey.trim() ? current.accountInfo : null,
                             apiInfo: event.target.value.trim() === current.apiKey.trim() ? current.apiInfo : null,
                             error: undefined,

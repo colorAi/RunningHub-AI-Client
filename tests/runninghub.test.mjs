@@ -10,7 +10,7 @@ import { build } from 'esbuild';
 const dir = await mkdtemp(join(tmpdir(), 'rh-regressions-'));
 const outfile = join(dir, 'api.mjs');
 await build({
-  stdin: { contents: "export * from './services/api'; export * from './services/apiCapacity'; export * from './utils/nodeUtils';", resolveDir: process.cwd(), loader: 'ts' },
+  stdin: { contents: "export * from './services/api'; export * from './services/apiCapacity'; export * from './services/taskExecutor'; export * from './utils/nodeUtils';", resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, platform: 'node', format: 'esm', outfile,
 });
 const api = await import(pathToFileURL(outfile).href);
@@ -119,6 +119,26 @@ test('HTTP 429 and API capacity errors are recoverable; authentication errors ar
   await assert.rejects(api.submitTask('a', '456', []), api.isCapacityLimitedError);
   assert.equal(api.isCapacityLimitedError({ code: 421 }), true);
   assert.equal(api.isCapacityLimitedError({ code: 401 }), false);
+});
+
+test('a rate-limit failure after task acceptance cannot trigger another paid submission', async () => {
+  let submissions = 0;
+  globalThis.fetch = async url => {
+    if (url.endsWith('/ai-app/run')) {
+      submissions++;
+      return json({ code: 0, data: { taskId: 'accepted-task', taskStatus: 'RUNNING' } });
+    }
+    if (url.endsWith('/v2/query')) return json({ taskId: 'accepted-task', status: 'FAILED', errorMessage: 'upstream rate limit' });
+    if (url.endsWith('/outputs')) return json({ code: 805, msg: 'rate limit' });
+    throw new Error(`Unexpected request: ${url}`);
+  };
+  await assert.rejects(api.executeWorkflowTask({ apiKey: 'a', webappId: '111', taskNodes: [], autoSaveEnabled: false }), error => {
+    assert.equal(error.taskId, 'accepted-task');
+    assert.equal(api.isCapacityLimitedError(error), false);
+    assert.match(error.message, /rate limit/);
+    return true;
+  });
+  assert.equal(submissions, 1);
 });
 
 test('queue totals include queued tasks when the total field is absent', async () => {

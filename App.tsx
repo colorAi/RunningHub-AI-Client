@@ -8,6 +8,7 @@ import TermsModal from './components/TermsModal';
 import { NodeInfo, TaskOutput, WebAppInfo, ApiKeyEntry, AutoSaveConfig, Favorite, HistoryItem, RecentApp, FailedTaskInfo, InstanceType, HomeDefaultTab, StandardModelConfig } from './types';
 import { saveMultipleFiles, getDirectoryName, initAutoSave, checkDirectoryAccess, getCurrentDirectoryPath } from './services/autoSaveService';
 import { useLanguage } from './services/i18n';
+import { playBatchReminder } from './services/taskReminder';
 
 const HomeView = lazy(() => import('./components/HomeView'));
 const StepConfig = lazy(() => import('./components/StepConfig'));
@@ -113,6 +114,8 @@ function App() {
   });
   const [homeViewResetToken, setHomeViewResetToken] = useState(0);
   const [appToOpen, setAppToOpen] = useState<MultiTaskAppRequest | null>(null);
+  const [hasOpenedWorkspace, setHasOpenedWorkspace] = useState(currentView === 'workspace');
+  const [modelConfigRevision, setModelConfigRevision] = useState(0);
 
   // State
   const [webappId, setWebappId] = useState('');
@@ -283,6 +286,7 @@ function App() {
   };
 
   const handleConfigComplete = (newModelConfig: StandardModelConfig, newNodes: NodeInfo[]) => {
+    setModelConfigRevision(value => value + 1);
     setStandardModelConfig(newModelConfig);
     setWebappId(newModelConfig.endpoint);
     setNodes(newNodes);
@@ -335,7 +339,7 @@ function App() {
     };
     setHistory(prev => [newItem, ...prev]);
 
-    if (currentView === 'workspace' && standardModelConfig.endpoint) {
+    if (standardModelConfig.endpoint) {
       return;
     }
 
@@ -343,23 +347,13 @@ function App() {
     setRunType('result');
   };
 
-  const handleBatchComplete = (summaryLogs: string[], failedTasks: FailedTaskInfo[]) => {
+  const handleBatchComplete = (summaryLogs: string[], failedTasks: FailedTaskInfo[], notify = true) => {
     setRunType('result'); // Switch to result view after batch too
     setBatchResult({ logs: summaryLogs, failedTasks });
     // 更新失败任务索引集合，用于在批量设置中显示
     setFailedBatchIndices(new Set(failedTasks.map(t => t.batchIndex)));
 
-    // Play completion sound if enabled
-    try {
-      const enabled = localStorage.getItem('rh_batch_reminder_enabled') === 'true';
-      const audioFile = localStorage.getItem('rh_batch_reminder_audio');
-      if (enabled && audioFile) {
-        const audio = new Audio(`/audio/${audioFile}`);
-        audio.play().catch(e => console.error("Failed to play audio:", e));
-      }
-    } catch (e) {
-      console.error("Error playing completion sound:", e);
-    }
+    if (notify) playBatchReminder();
   };
 
   const handleUpdateFavorites = (updatedFavs: Favorite[]) => {
@@ -403,6 +397,7 @@ function App() {
   };
 
   const handleSwitchView = (view: AppView) => {
+    if (view === 'workspace') setHasOpenedWorkspace(true);
     if (view === 'home') {
       setHomeViewResetToken(prev => prev + 1);
     }
@@ -569,7 +564,7 @@ function App() {
 
           {/* Workspace View */}
           <div className={`flex-1 flex overflow-hidden ${currentView === 'workspace' ? 'flex' : 'hidden'}`}>
-            {currentView === 'workspace' && (
+            {hasOpenedWorkspace && (
               <>
                 {/* Column 1: Configuration (Sidebar) - Fixed width */}
                 <div className="w-[320px] bg-white dark:bg-[#161920] border-r border-slate-200 dark:border-slate-800/50 flex flex-col shrink-0 z-10 transition-colors duration-300">
@@ -586,6 +581,7 @@ function App() {
                 {/* Column 2: Parameters (Center Editor) - Wider fixed width */}
                 <div className="w-[450px] bg-slate-50/50 dark:bg-[#0F1115] border-r border-slate-200 dark:border-slate-800/50 flex flex-col shrink-0 relative transition-colors duration-300">
                   <StepEditor
+                    key={modelConfigRevision}
                     nodes={nodes}
                     apiKeys={enterpriseApiKeyList}
                     isConnected={isConnected}
@@ -631,7 +627,7 @@ function App() {
                       onComplete={handleComplete}
                       onBack={() => setRunType('none')}
                       onBatchComplete={handleBatchComplete}
-                      onBatchCancel={handleBatchComplete}
+                      onBatchCancel={(logs, failedTasks) => handleBatchComplete(logs, failedTasks, false)}
                     />
                   ) : (
                     <WorkspacePanel

@@ -19,6 +19,7 @@ const EN_TRANSLATIONS: Record<string, string> = {
   '当前卡片仍在执行或停止中，请稍后再提交。': 'This card is still running or stopping. Please try again shortly.',
   '实例保留时长必须为 10–180 秒的整数': 'Instance retention must be a whole number from 10 to 180 seconds.',
   '多任务模式': 'Multi-task',
+  '草稿无法保存尚未上传的本地文件，请先上传文件或移除对应的批量文件后再保存。': 'Drafts cannot store local files that have not been uploaded. Upload or remove the pending batch files before saving.',
   '其他工具': 'Other Tools',
   '工作区': 'Workspace',
   '我的收藏': 'My Favorites',

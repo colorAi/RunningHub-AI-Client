@@ -211,8 +211,15 @@ export class TauriFileHandle {
   async getFile(): Promise<File> {
     try {
       const content = await readFile(this.path);
-      const blob = new Blob([content]);
-      return new File([blob], this.name);
+      const mimeTypes: Record<string, string> = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
+        mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac',
+        mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+        txt: 'text/plain', json: 'application/json',
+      };
+      const type = mimeTypes[this.name.split('.').pop()?.toLowerCase() || ''] || 'application/octet-stream';
+      return new File([content], this.name, { type });
     } catch (e) {
       if (this.shouldCreate) {
         return new File([], this.name);

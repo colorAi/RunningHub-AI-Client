@@ -3,6 +3,7 @@ import { NodeInfo, PendingFilesMap } from '../types';
 import { getSwitchFieldConfig, parseListOptions } from '../utils/nodeUtils';
 import { X, Plus, Trash2, Save, Copy, AlertCircle, UploadCloud, Loader2, FileAudio, FileVideo, FileImage, FileText, FolderOpen, Images, RefreshCw } from 'lucide-react';
 import { uploadFile } from '../services/api';
+import { selectInputDirectory, selectInputFiles } from '../services/inputFiles';
 
 interface BatchSettingsModalProps {
     isOpen: boolean;
@@ -295,17 +296,28 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
         // Create local preview immediately
         if (file.type.startsWith('image/')) {
             const url = URL.createObjectURL(file);
-            setLocalPreviews(prev => ({ ...prev, [key]: url }));
+            setLocalPreviews(prev => {
+                if (prev[key]) URL.revokeObjectURL(prev[key]);
+                return { ...prev, [key]: url };
+            });
         }
 
         setUploadingState(prev => ({ ...prev, [key]: true }));
 
         try {
             const result = await uploadFile(apiKey, file);
-            handleFieldChange(batchIndex, nodeId, fieldName, result.fileName);
+            // Rows can move or be removed while the upload is pending.
+            setBatchList(prev => prev.map((row, index) => (row[0]?._taskId || `task-${index}`) === taskId
+                ? row.map(node => node.nodeId === nodeId && node.fieldName === fieldName ? { ...node, fieldValue: result.fileName } : node)
+                : row));
+            setPendingFiles(prev => {
+                const updated = { ...prev };
+                delete updated[key];
+                return updated;
+            });
         } catch (err: any) {
             console.error("Upload failed", err);
-            // Optionally handle error state here
+            setToast({ type: 'error', message: '上传失败: ' + (err.message || '请重试') });
         } finally {
             setUploadingState(prev => ({ ...prev, [key]: false }));
         }
@@ -435,7 +447,8 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 return;
             }
 
-            const dirHandle = await (window as any).showDirectoryPicker();
+            const dirHandle = await selectInputDirectory();
+            if (!dirHandle) return;
             const imageFiles: { name: string; file: File }[] = [];
             const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.jfif'];
 
@@ -481,21 +494,13 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                 return;
             }
 
-            const fileHandles = await (window as any).showOpenFilePicker({
-                types: [{
-                    description: 'Image Files',
-                    accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.jfif'] }
-                }],
+            const files = await selectInputFiles({
+                description: 'Image Files',
+                accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.jfif'] },
                 multiple: true,
-                excludeAcceptAllOption: false,
             });
 
-            const imageFiles = await Promise.all(
-                fileHandles.map(async (handle: any) => {
-                    const file = await handle.getFile();
-                    return { name: file.name, file };
-                })
-            );
+            const imageFiles = files.map(file => ({ name: file.name, file }));
 
             if (imageFiles.length === 0) {
                 setToast({ type: 'error', message: '未选择图片文件' });
@@ -524,7 +529,8 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
             const [targetNodeId, targetFieldName] = targetKey.split('|');
 
             // Use File System Access API to pick a directory
-            const dirHandle = await (window as any).showDirectoryPicker();
+            const dirHandle = await selectInputDirectory();
+            if (!dirHandle) return;
 
             // Collect all video files recursively
             const videoFiles: { name: string; file: File }[] = [];
@@ -671,7 +677,8 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
             const targetKey = selectedAudioNodeId || `${audioNodes[0].nodeId}|${audioNodes[0].fieldName || ''}`;
             const [targetNodeId, targetFieldName] = targetKey.split('|');
 
-            const dirHandle = await (window as any).showDirectoryPicker();
+            const dirHandle = await selectInputDirectory();
+            if (!dirHandle) return;
 
             const audioFiles: { name: string; file: File }[] = [];
             const audioExtensions = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma'];
@@ -798,15 +805,12 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
             const [targetNodeId, targetFieldName] = targetKey.split('|');
 
             // Use File System Access API to pick a .txt file
-            const [fileHandle] = await (window as any).showOpenFilePicker({
-                types: [{
-                    description: 'Text Files',
-                    accept: { 'text/plain': ['.txt'] }
-                }],
+            const [file] = await selectInputFiles({
+                description: 'Text Files',
+                accept: { 'text/plain': ['.txt'] },
                 multiple: false
             });
-
-            const file = await fileHandle.getFile();
+            if (!file) return;
             const content = await file.text();
 
             // Parse by single newline (each line = one prompt)
@@ -1324,6 +1328,7 @@ const BatchSettingsModal: React.FC<BatchSettingsModalProps> = ({
                         </div>
                         <button
                             onClick={handleSave}
+                            disabled={Object.values(uploadingState).some(Boolean)}
                             className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-600 rounded-lg shadow-sm transition-colors"
                         >
                             <Save className="w-4 h-4" />

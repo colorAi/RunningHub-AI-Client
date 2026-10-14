@@ -124,6 +124,18 @@ async function checkSaveFileExists(filename: string): Promise<boolean> {
   return fileExists(directoryHandle, filename);
 }
 
+async function reserveSequentialFilename(baseName: string, extension: string): Promise<string> {
+  const cacheKey = `${baseName}.${extension}`;
+  while (true) {
+    const index = sequenceCache.get(cacheKey) || 1;
+    if (index > 100000) throw new Error('Too many sequential files');
+    // Reserve before awaiting: other task cards may save the same batch concurrently.
+    sequenceCache.set(cacheKey, index + 1);
+    const candidate = `${baseName}_${String(index).padStart(5, '0')}.${extension}`;
+    if (!await checkSaveFileExists(candidate)) return candidate;
+  }
+}
+
 // ============================================================================
 // IndexedDB 操作（浏览器模式）
 // ============================================================================
@@ -473,26 +485,7 @@ export async function saveFileFromUrl(
         if (!ext) ext = 'bin';
         
         const baseName = sanitizeFilenamePart(filename, 'file');
-        const cacheKey = `${baseName}.${ext}`;
-        let index = sequenceCache.get(cacheKey) || 1;
-        
-        // 查找下一个可用的序号，调用后端的 check_file_exists
-        while (true) {
-          const suffix = String(index).padStart(5, '0');
-          const candidate = `${baseName}_${suffix}.${ext}`;
-          
-          const exists = await checkSaveFileExists(candidate);
-          if (exists) {
-            index++;
-          } else {
-            finalFilename = candidate;
-            sequenceCache.set(cacheKey, index + 1);
-            break;
-          }
-          
-          // 安全限制
-          if (index > 100000) throw new Error('Too many sequential files');
-        }
+        finalFilename = await reserveSequentialFilename(baseName, ext);
       } else if (!filename) {
         // 默认行为：添加时间戳
         const fileExt = finalFilename.includes('.')
@@ -568,26 +561,7 @@ export async function saveFileFromUrl(
     if (!ext) ext = 'bin';
     
     const baseName = sanitizeFilenamePart(filename, 'file');
-    const cacheKey = `${baseName}.${ext}`;
-    let index = sequenceCache.get(cacheKey) || 1;
-    
-    // 查找下一个可用的序号
-    while (true) {
-      const suffix = String(index).padStart(5, '0');
-      const candidate = `${baseName}_${suffix}.${ext}`;
-      
-      const exists = await checkSaveFileExists(candidate);
-      if (exists) {
-        index++;
-      } else {
-        finalFilename = candidate;
-        sequenceCache.set(cacheKey, index + 1);
-        break;
-      }
-      
-      // 安全限制
-      if (index > 100000) throw new Error('Too many sequential files');
-    }
+    finalFilename = await reserveSequentialFilename(baseName, ext);
   } else if (!url.startsWith('blob:') && !filename) {
     // 默认行为：添加时间戳
     const fileExt = finalFilename.includes('.')

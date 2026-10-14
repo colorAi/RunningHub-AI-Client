@@ -51,11 +51,13 @@ export interface MultiTaskCardData {
   nodes: NodeInfo[];
   isConnected: boolean;
   loading: boolean;
+  editorRevision: number;
   loadError: string | null;
   instanceType: InstanceType;
   runOptions?: WorkflowRunOptions;
   initialBatchList?: NodeInfo[][];
   initialBatchTaskName?: string;
+  initialPendingFiles?: PendingFilesMap;
   run: MultiTaskCardRunState;
 }
 
@@ -357,6 +359,8 @@ const MultiTaskCard: React.FC<MultiTaskCardProps> = ({
 
       <div className="relative flex-1 min-h-0">
         <StepEditor
+          key={card.editorRevision}
+          initialPendingFiles={card.initialPendingFiles}
           ref={editorRef}
           nodes={card.nodes}
           apiKeys={apiKeys}

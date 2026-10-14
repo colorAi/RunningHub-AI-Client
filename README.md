@@ -16,7 +16,10 @@ For commercial licensing or secondary development authorization, please contact 
 
 ### v1.6.7
 
-- Fixed “Use Now” in the app store and favorites to open Multi-task mode, create an app card, and load its default parameters while preserving existing cards.
+- Fixed task-card creation and parameter loading from the app store and favorites.
+- Fixed task concurrency, duplicate submissions, cancellation, and parameter state.
+- Fixed desktop batch imports, card copying, and concurrent file saving.
+- Fixed API settings refresh and batch reminders; improved draft validation.
 
 ### v1.6.6
 
@@ -162,7 +165,10 @@ Modified versions that are distributed or offered for remote network use must ma
 
 ### v1.6.7
 
-- 修复商城及收藏中“立即使用”的跳转：自动进入多任务模式，创建应用卡片并加载默认参数，保留已有卡片。
+- 修复商城及收藏“立即使用”的卡片创建和参数加载。
+- 修复任务并发、重复提交、取消追踪及参数串用问题。
+- 修复桌面端批量导入、卡片复制及并发文件保存。
+- 修复 API 设置刷新和批量提醒，完善草稿校验。
 
 ### v1.6.6
 

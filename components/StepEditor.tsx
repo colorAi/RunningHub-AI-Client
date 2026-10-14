@@ -86,7 +86,8 @@ const hasSameNodeStructure = (left: NodeInfo[], right: NodeInfo[]) => {
 
 const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys, isConnected, runType, webAppInfo, onBack, onRun, onCancel, failedBatchIndices = new Set(), onRetryTask, instanceType = 'default', onInstanceTypeChange, initialBatchList = EMPTY_BATCH_LIST, initialBatchTaskName = '', initialPendingFiles = EMPTY_PENDING_FILES, mode = 'app', standardModelConfig }, ref) => {
     const editorDomId = useId().replace(/:/g, '-');
-    const [localNodes, setLocalNodes] = useState<NodeInfo[]>(nodes);
+    const [localNodes, setLocalNodes] = useState<NodeInfo[]>(() => nodes.map(node => ({ ...node })));
+    const uploadRequestsRef = useRef(new Map<string, symbol>());
     const [uploadingState, setUploadingState] = useState<Record<string, boolean>>({});
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [modelPricePreview, setModelPricePreview] = useState<RunningHubModelPricePreview | null>(null);
@@ -143,7 +144,7 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
             setIsNodesLoading(true);
         }
         
-        setLocalNodes(nodes);
+        setLocalNodes(nodes.map(node => ({ ...node })));
         // Reset broken images on new node load
         setBrokenImages({});
         setBrokenVideos({});
@@ -174,6 +175,7 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
     // Cleanup object URLs to avoid memory leaks
     useEffect(() => {
         return () => {
+            uploadRequestsRef.current.clear();
             Object.values(previewsRef.current).forEach(url => URL.revokeObjectURL(url as string));
         };
     }, []);
@@ -245,9 +247,7 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
     }, [hasUploadingFiles, isConnected, mode, modelPricePreviewPayload, primaryApiKey, standardModelEndpoint]);
 
     const handleTextChange = (index: number, val: string) => {
-        const newNodes = [...localNodes];
-        newNodes[index].fieldValue = val;
-        setLocalNodes(newNodes);
+        setLocalNodes(prev => prev.map((node, nodeIndex) => nodeIndex === index ? { ...node, fieldValue: val } : node));
     };
 
     const handleClearFile = (index: number) => {
@@ -255,9 +255,9 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
         const key = node.nodeId + '_' + index;
 
         // Clear the field value
-        const newNodes = [...localNodes];
-        newNodes[index].fieldValue = '';
-        setLocalNodes(newNodes);
+        uploadRequestsRef.current.delete(key);
+        setUploadingState(prev => ({ ...prev, [key]: false }));
+        handleTextChange(index, '');
 
         // Clear preview if exists
         if (previews[key]) {
@@ -297,6 +297,8 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
     const processFile = async (index: number, file: File) => {
         const node = localNodes[index];
         const key = node.nodeId + '_' + index;
+        const request = Symbol(key);
+        uploadRequestsRef.current.set(key, request);
 
         if (previews[key]) {
             URL.revokeObjectURL(previews[key]);
@@ -325,13 +327,18 @@ const StepEditor = forwardRef<StepEditorRef, StepEditorProps>(({ nodes, apiKeys,
             // Use first API key for file uploads
             const primaryApiKey = apiKeys[0] || '';
             const result = await uploadFile(primaryApiKey, file);
-            const newNodes = [...localNodes];
-            newNodes[index].fieldValue = result.fileName;
-            setLocalNodes(newNodes);
+            if (uploadRequestsRef.current.get(key) !== request) return;
+            setLocalNodes(prev => prev.map((current, nodeIndex) => nodeIndex === index
+                ? { ...current, fieldValue: result.fileName }
+                : current));
         } catch (err: any) {
+            if (uploadRequestsRef.current.get(key) !== request) return;
             setErrors(prev => ({ ...prev, [key]: err.message || 'Upload failed' }));
         } finally {
-            setUploadingState(prev => ({ ...prev, [key]: false }));
+            if (uploadRequestsRef.current.get(key) === request) {
+                uploadRequestsRef.current.delete(key);
+                setUploadingState(prev => ({ ...prev, [key]: false }));
+            }
         }
     };
 

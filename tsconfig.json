@@ -25,5 +25,7 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": ["*.ts", "*.tsx", "components/**/*.tsx", "services/**/*.ts", "services/**/*.tsx", "utils/**/*.ts"],
+  "exclude": ["node_modules", "dist", "dist-ssr", "dist-portable", "src-tauri"]
 }

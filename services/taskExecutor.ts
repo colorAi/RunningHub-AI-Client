@@ -15,6 +15,14 @@ export class TaskCancelledError extends Error {
   }
 }
 
+export class TaskExecutionError extends Error {
+  readonly taskSubmitted = true;
+  constructor(readonly taskId: string, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'TaskExecutionError';
+  }
+}
+
 export interface TaskUsageStats {
   coins: number;
   thirdParty: number;
@@ -308,6 +316,10 @@ export const executeWorkflowTask = async ({
 
       await sleep(pollIntervalMs);
     }
+  } catch (error) {
+    if (error instanceof TaskCancelledError) throw error;
+    // A result-query or workflow error must never requeue a task already accepted by the server.
+    throw new TaskExecutionError(submitResult.taskId, error);
   } finally {
     stopProgressMonitor();
   }

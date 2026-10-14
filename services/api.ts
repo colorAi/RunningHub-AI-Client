@@ -241,6 +241,7 @@ export const getRunningHubErrorMessage = (code?: string | number | null, fallbac
 };
 
 export const isCapacityLimitedError = (error: unknown): boolean => {
+  if ((error as { taskSubmitted?: boolean } | null)?.taskSubmitted) return false;
   const code = String((error as { code?: string | number } | null)?.code ?? '').trim();
   if (code === '421' || code === '429' || code === '1003' || code === '1520') {
     return true;
